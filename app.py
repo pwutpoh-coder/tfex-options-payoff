@@ -28,33 +28,51 @@ def load_trades():
 def save_trades(df):
     df.to_csv(TRADE_FILE, index=False)
 
-# --- ดึงข้อมูล Yahoo Finance พร้อมแปลงเวลาเป็น Bangkok (UTC+7) ---
+# --- ดึงข้อมูลราคาและคำนวณ Volatility อัตโนมัติจาก Yahoo Finance ---
 @st.cache_data(ttl=10)
-def get_market_price(market_type):
+def get_market_data(market_type):
     try:
         if market_type == "TFEX USD/THB":
-            ticker = yf.Ticker("THB=X")
+            ticker_str = "THB=X"
+            default_p = 35.0
+            default_v = 0.08
         else:  # TFEX SET50
-            ticker = yf.Ticker("^SET50.BK")
+            ticker_str = "^SET50.BK"
+            default_p = 950.0
+            default_v = 0.18
             
+        ticker = yf.Ticker(ticker_str)
         price = None
+        
         if hasattr(ticker, "fast_info") and "last_price" in ticker.fast_info:
             price = float(ticker.fast_info["last_price"])
         
+        # ดึงข้อมูลHistorical 6 เดือนเพื่อคำนวณ Annualized Volatility
+        hist = ticker.history(period="6mo")
+        if not hist.empty and len(hist) > 1:
+            # คำนวณ Log Returns
+            hist['Log_Return'] = np.log(hist['Close'] / hist['Close'].shift(1))
+            # คำนวณ Standard Deviation และ Annualize (252 วันทำการ)
+            daily_vol = hist['Log_Return'].std()
+            calc_vol = float(daily_vol * np.sqrt(252))
+            if np.isnan(calc_vol) or calc_vol <= 0:
+                calc_vol = default_v
+        else:
+            calc_vol = default_v
+
         if not price:
-            data = ticker.history(period="1d", interval="1m")
-            if not data.empty:
-                price = float(data['Close'].iloc[-1])
+            if not hist.empty:
+                price = float(hist['Close'].iloc[-1])
             else:
-                data_d = ticker.history(period="1d")
-                price = float(data_d['Close'].iloc[-1]) if not data_d.empty else (35.0 if market_type == "TFEX USD/THB" else 950.0)
+                price = default_p
                 
         update_time = datetime.now(BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S (ICT / UTC+7)")
-        return price, update_time
+        return price, calc_vol, update_time
     except:
         default_p = 35.0 if market_type == "TFEX USD/THB" else 950.0
+        default_v = 0.08 if market_type == "TFEX USD/THB" else 0.18
         update_time = datetime.now(BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S (ICT / UTC+7)")
-        return default_p, update_time
+        return default_p, default_v, update_time
 
 # --- ฟังก์ชันคำนวณ Black-Scholes & Greeks ---
 def bs_greeks(S, K, T, r, sigma, option_type):
@@ -89,12 +107,12 @@ st.markdown("ระบบวิเคราะห์ Payoff Chart (USD/THB แ�
 st.sidebar.header("⚙️ เลือกตลาดและตั้งค่า")
 selected_market = st.sidebar.selectbox("เลือกตลาด TFEX", ["TFEX USD/THB", "TFEX SET50"])
 
-# ดึงราคาปัจจุบันตามตลาดที่เลือก
-current_spot, last_update_time = get_market_price(selected_market)
+# ดึงราคาและ Volatility อัตโนมัติจากตลาดที่เลือก
+current_spot, auto_volatility, last_update_time = get_market_data(selected_market)
 
 col_r1, col_r2, col_r3 = st.columns([2, 4, 2])
 with col_r1:
-    if st.button("🔄 รีเฟรชราคาตลาดทันที"):
+    if st.button("🔄 รีเฟรชข้อมูลตลาดทันที"):
         st.cache_data.clear()
         st.rerun()
 
@@ -102,8 +120,14 @@ with col_r2:
     st.markdown(f"**ตลาด:** `{selected_market}` | **อัปเดตล่าสุด:** `{last_update_time}`")
 
 spot_price = st.sidebar.number_input(f"ราคาอ้างอิงปัจจุบัน ({selected_market})", value=float(current_spot), format="%.4f")
-default_vol = 0.08 if selected_market == "TFEX USD/THB" else 0.18
-volatility_input = st.sidebar.slider("Volatility สมมติสำหรับคำนวณ Greeks (%)", 1.0, 50.0, float(default_vol * 100)) / 100.0
+
+# แสดงค่า Volatility ที่ดึงมาแบบอัตโนมัติ และให้ผู้ใช้ปรับแต่งต่อได้
+volatility_input = st.sidebar.slider(
+    "Volatility (%) [คำนวณอัตโนมัติจากตลาด]", 
+    1.0, 100.0, 
+    float(auto_volatility * 100)
+) / 100.0
+
 risk_free_rate = 0.025
 
 # กำหนดตัวคูณสัญญา (Multiplier) ตามตลาด
@@ -171,7 +195,7 @@ if not trades_df.empty:
 else:
     st.info("ยังไม่มีข้อมูลในพอร์ต กรุณาเพิ่มสัญญาจากเมนูด้านซ้ายเพื่อเริ่มต้นบันทึกข้อมูล")
 
-# --- แสดงผลกราฟ Payoff และ Greeks เสมอ (แม้ยังไม่มีข้อมูลเทรดในตลาดนั้น) ---
+# --- แสดงผลกราฟ Payoff และ Greeks เสมอ ---
 st.subheader(f"📊 วิเคราะห์ Payoff และ Greeks สำหรับพอร์ต: {selected_market}")
 
 c_opt1, c_opt2, c_opt3, c_opt4 = st.columns(4)
@@ -250,7 +274,6 @@ if not market_trades.empty:
             hovertemplate=f"<b>{row['Strategy']} ({p_type})</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
         ))
 
-# วาดกราฟเส้นรวมพอร์ต (ถ้ายังไม่มีข้อมูลจะเป็นเส้น 0)
 fig.add_trace(go.Scatter(
     x=price_range, y=total_payoff,
     mode='lines',
@@ -261,7 +284,6 @@ fig.add_trace(go.Scatter(
 
 fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 
-# คำนวณ P&L ปัจจุบัน
 current_portfolio_pnl = 0
 if not market_trades.empty:
     for idx, row in market_trades.iterrows():

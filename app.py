@@ -1,7 +1,7 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 import yfinance as yf
 import os
 from datetime import datetime, date
@@ -30,7 +30,6 @@ def save_trades(df):
 def get_usd_thb():
     try:
         ticker = yf.Ticker("THB=X")
-        # พยายามดึงจาก fast_info ก่อนเพื่อความรวดเร็วและสดใหม่
         price = None
         if hasattr(ticker, "fast_info") and "last_price" in ticker.fast_info:
             price = float(ticker.fast_info["last_price"])
@@ -43,7 +42,6 @@ def get_usd_thb():
                 data_d = ticker.history(period="1d")
                 price = float(data_d['Close'].iloc[-1]) if not data_d.empty else 35.00
                 
-        # ใช้เวลาปัจจุบันของเครื่อง (พ่วงโซนเวลาประเทศไทย) เพื่อให้ตรงกับเวลาจริงที่กดรีเฟรช
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         return price, update_time
     except:
@@ -76,7 +74,7 @@ def bs_greeks(S, K, T, r, sigma, option_type):
 
 # --- UI หลัก ---
 st.title("📈 TFEX USD/THB Options & Futures Pro Dashboard")
-st.markdown("ระบบวิเคราะห์ Payoff Chart, Greeks, เวลาคงเหลือ, จุดคุ้มทุน และบันทึกประวัติการเทรดแบบเรียลไทม์")
+st.markdown("ระบบวิเคราะห์ Payoff Chart แบบ Interactive (ชี้เมาส์เพื่อดูราคา/กำไรขาดทุน), Greeks, และบันทึกประวัติการเทรด")
 
 # ส่วนดึงราคาอ้างอิงและรีเฟรช
 col_r1, col_r2, col_r3 = st.columns([2, 3, 3])
@@ -152,8 +150,8 @@ if not trades_df.empty:
 else:
     st.info("ยังไม่มีข้อมูลในพอร์ต กรุณาเพิ่มสัญญาจากเมนูด้านซ้าย")
 
-# --- การตั้งค่าการแสดงผลกราฟ Payoff ---
-st.subheader("📊 วิเคราะห์ Payoff และ Greeks รวมพอร์ต")
+# --- การตั้งค่าการแสดงผลกราฟ Payoff (Plotly Interactive) ---
+st.subheader("📊 วิเคราะห์ Payoff และ Greeks รวมพอร์ต (Interactive)")
 if not trades_df.empty:
     c_opt1, c_opt2, c_opt3, c_opt4 = st.columns(4)
     with c_opt1:
@@ -161,7 +159,7 @@ if not trades_df.empty:
     with c_opt2:
         include_comm = st.checkbox("รวมหักค่าคอมมิชชั่น", value=True)
     with c_opt3:
-        show_greeks_lines = st.checkbox("แสดงเส้นจำลองผลกระทบ Greeks (T-7 วัน)", value=False)
+        show_greeks_lines = st.checkbox("แสดงรายละเอียดวันหมดอายุ", value=True)
     with c_opt4:
         show_breakeven = st.checkbox("แสดงจุดคุ้มทุน (Break-even)", value=True)
 
@@ -170,9 +168,11 @@ if not trades_df.empty:
     total_greeks = {"Delta": 0.0, "Gamma": 0.0, "Theta": 0.0, "Vega": 0.0}
     
     multiplier = 1000 
-    fig, ax = plt.subplots(figsize=(12, 6))
     today = date.today()
     
+    # สร้าง Plotly Figure
+    fig = go.Figure()
+
     for idx, row in trades_df.iterrows():
         p_type = row["Type"]
         stk = float(row["Strike"])
@@ -218,23 +218,28 @@ if not trades_df.empty:
             dir_sign = 1 if "Long" in p_type else -1
             total_greeks["Delta"] += 1.0 * qty * multiplier * dir_sign
 
-        # กราฟย่อยแต่ละขา (เส้นบางๆ) พร้อมระบุซีรีส์และวันหมดอายุ
-        ax.plot(price_range, payoff, linestyle="--", alpha=0.3, label=f"{row['Strategy']} ({row['Series']} | {p_type}) [เหลือ {days_to_expiry} วัน]")
+        # เพิ่มเส้นกราฟย่อยแต่ละขา (เส้นประจางๆ เมื่อเอาเมาส์ชี้จะเห็นรายละเอียด)
+        fig.add_trace(go.Scatter(
+            x=price_range, y=payoff,
+            mode='lines',
+            name=f"{row['Strategy']} ({row['Series']} {p_type})",
+            line=dict(dash='dash', width=1.5),
+            opacity=0.5,
+            hovertemplate=f"<b>{row['Strategy']} ({p_type})</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
+        ))
 
-        # เส้นจำลอง T-7 วัน (ถ้าเลือกเปิดใช้งาน)
-        if show_greeks_lines and opt_flag and T > 7/365:
-            T_minus_7 = max((days_to_expiry - 7), 0) / 365.0
-            payoff_t7 = np.zeros_like(price_range)
-            for i, p_val in enumerate(price_range):
-                g_t7 = bs_greeks(p_val, stk, T_minus_7, risk_free_rate, volatility_input, opt_flag)
-                # ประมาณการค่าพรีเมี่ยมตามทฤษฎีคร่าวๆ
-                # สามารถเพิ่มโค้ดแสดงเส้นประสีจางได้ที่นี่
-                pass
+    # เส้นกราฟรวมพอร์ตหลัก (Total Portfolio Payoff)
+    fig.add_trace(go.Scatter(
+        x=price_range, y=total_payoff,
+        mode='lines',
+        name='Total Portfolio Payoff',
+        line=dict(color='blue', width=3),
+        hovertemplate="<b>Total Portfolio</b><br>Price at Expiry: %{x:.2f}<br>Total P&L: %{y:,.2f}<extra></extra>"
+    ))
 
-    # กราฟรวมพอร์ตหลัก
-    ax.plot(price_range, total_payoff, color="blue", linewidth=3, label="Total Portfolio Payoff (At Expiry)")
-    ax.axhline(0, color="black", linewidth=1, linestyle="-")
-    
+    # เส้นศูนย์ (Break-even line Y=0)
+    fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
+
     # คำนวณ P&L ปัจจุบัน ณ ราคา Spot ปัจจุบัน
     current_portfolio_pnl = 0
     for idx, row in trades_df.iterrows():
@@ -258,25 +263,54 @@ if not trades_df.empty:
         elif p_type == "Short Put Option":
             current_portfolio_pnl += (prem - np.maximum(0, stk - spot_price)) * mult_qty - comm_total
 
-    # เส้นแสดงตำแหน่งปัจจุบันบนกราฟ
-    ax.axvline(spot_price, color="red", linestyle=":", linewidth=2, label=f"Current Spot: {spot_price:.2f} (P&L: {current_portfolio_pnl:,.2f})")
-    ax.scatter([spot_price], [current_portfolio_pnl], color="red", s=80, zorder=5)
+    # เส้นและจุดแสดงตำแหน่งปัจจุบัน (Current Spot & P&L)
+    fig.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
+    fig.add_trace(go.Scatter(
+        x=[spot_price], y=[current_portfolio_pnl],
+        mode='markers+text',
+        name='Current Position',
+        marker=dict(color='red', size=12),
+        text=[f"Current Spot: {spot_price:.2f}<br>P&L: {current_portfolio_pnl:,.2f} THB"],
+        textposition="top center",
+        hovertemplate="<b>Current Status</b><br>Spot: %{x:.2f}<br>Current P&L: %{y:,.2f}<extra></extra>"
+    ))
 
     # จุดคุ้มทุน (Break-even Points)
     if show_breakeven:
         sign_change = np.where(np.diff(np.sign(total_payoff)))[0]
+        be_x = []
+        be_y = []
+        be_text = []
         for idx_be in sign_change:
             p_be = price_range[idx_be]
-            ax.scatter([p_be], [0], color="green", marker="X", s=100, zorder=6)
-            ax.annotate(f"BE: {p_be:.2f}", (p_be, 0), textcoords="offset points", xytext=(0,10), ha='center', fontsize=9, color="green", weight="bold")
+            be_x.append(p_be)
+            be_y.append(0)
+            be_text.append(f"BE: {p_be:.2f}")
+        
+        if be_x:
+            fig.add_trace(go.Scatter(
+                x=be_x, y=be_y,
+                mode='markers+text',
+                name='Break-even Points',
+                marker=dict(color='green', symbol='x', size=12),
+                text=be_text,
+                textposition="bottom center",
+                hovertemplate="<b>Break-even</b><br>Price: %{x:.2f}<extra></extra>"
+            ))
 
-    ax.set_title(f"TFEX USD/THB Strategy Payoff ({payoff_mode})", fontsize=14)
-    ax.set_xlabel("Underlying Price at Expiry (THB)", fontsize=12)
-    ax.set_ylabel(f"Profit / Loss ({payoff_mode})", fontsize=12)
-    ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=9)
-    ax.grid(True, alpha=0.3)
-    
-    st.pyplot(fig)
+    # ปรับแต่ง Layout ของ Plotly ให้สวยงาม
+    fig.update_layout(
+        title=f"TFEX USD/THB Strategy Payoff Chart ({payoff_mode})",
+        xaxis_title="Underlying Price at Expiry (THB)",
+        yaxis_title=f"Profit / Loss ({payoff_mode})",
+        hovermode="x unified",
+        template="plotly_white",
+        height=600,
+        legend=dict(x=0.01, y=0.99, bgcolor='rgba(255,255,255,0.8)')
+    )
+
+    # แสดงกราฟบน Streamlit
+    st.plotly_chart(fig, use_container_width=True)
     
     # --- สรุป Greeks รวมพอร์ต ---
     st.subheader("📐 สรุปค่า Greeks และสถานะพอร์ต")

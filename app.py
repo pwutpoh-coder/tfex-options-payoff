@@ -4,12 +4,15 @@ import pandas as pd
 import plotly.graph_objects as go
 import yfinance as yf
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 from scipy.stats import norm
 
 st.set_page_config(page_title="TFEX Multi-Asset Payoff & Greeks Dashboard", layout="wide")
 
-TRADE_FILE = "trades_multi_asset.csv"
+TRADE_FILE = "trades_multi_asset.csv`"
+
+# กำหนดโซนเวลา Bangkok (UTC+7)
+BANGKOK_TZ = timezone(timedelta(hours=7))
 
 # --- ฟังก์ชันจัดการข้อมูล (CRUD) ---
 def load_trades():
@@ -25,7 +28,7 @@ def load_trades():
 def save_trades(df):
     df.to_csv(TRADE_FILE, index=False)
 
-# --- ดึงข้อมูล Yahoo Finance ตามตลาดที่เลือก ---
+# --- ดึงข้อมูล Yahoo Finance พร้อมแปลงเวลาเป็น Bangkok (UTC+7) ---
 @st.cache_data(ttl=10)
 def get_market_price(market_type):
     try:
@@ -46,11 +49,13 @@ def get_market_price(market_type):
                 data_d = ticker.history(period="1d")
                 price = float(data_d['Close'].iloc[-1]) if not data_d.empty else (35.0 if market_type == "TFEX USD/THB" else 950.0)
                 
-        update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # ดึงเวลาปัจจุบันตามโซนเวลา กรุงเทพฯ (UTC+7)
+        update_time = datetime.now(BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S (ICT / UTC+7)")
         return price, update_time
     except:
         default_p = 35.0 if market_type == "TFEX USD/THB" else 950.0
-        return default_p, datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        update_time = datetime.now(BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S (ICT / UTC+7)")
+        return default_p, update_time
 
 # --- ฟังก์ชันคำนวณ Black-Scholes & Greeks ---
 def bs_greeks(S, K, T, r, sigma, option_type):
@@ -79,23 +84,23 @@ def bs_greeks(S, K, T, r, sigma, option_type):
 
 # --- UI หลัก ---
 st.title("📈 TFEX Multi-Asset Options & Futures Pro Dashboard")
-st.markdown("ระบบวิเคราะห์ Payoff Chart (USD/THB และ SET50), Interactive Hover, Greeks, และบันทึกประวัติการเทรด")
+st.markdown("ระบบวิเคราะห์ Payoff Chart (USD/THB และ SET50), Interactive Hover, Greeks, และบันทึกประวัติการเทรด (เวลาไทย UTC+7)")
 
-# เลือกตลาดหลักในหน้าจอหลักหรือ Sidebar
+# เลือกตลาดหลักใน Sidebar
 st.sidebar.header("⚙️ เลือกตลาดและตั้งค่า")
 selected_market = st.sidebar.selectbox("เลือกตลาด TFEX", ["TFEX USD/THB", "TFEX SET50"])
 
 # ดึงราคาปัจจุบันตามตลาดที่เลือก
 current_spot, last_update_time = get_market_price(selected_market)
 
-col_r1, col_r2, col_r3 = st.columns([2, 3, 3])
+col_r1, col_r2, col_r3 = st.columns([2, 4, 2])
 with col_r1:
     if st.button("🔄 รีเฟรชราคาตลาดทันที"):
         st.cache_data.clear()
         st.rerun()
 
 with col_r2:
-    st.markdown(f"**ตลาดปัจจุบัน:** `{selected_market}` | **เวลาอัปเดต:** `{last_update_time}`")
+    st.markdown(f"**ตลาด:** `{selected_market}` | **อัปเดตล่าสุด:** `{last_update_time}`")
 
 spot_price = st.sidebar.number_input(f"ราคาอ้างอิงปัจจุบัน ({selected_market})", value=float(current_spot), format="%.4f")
 default_vol = 0.08 if selected_market == "TFEX USD/THB" else 0.18
@@ -103,7 +108,6 @@ volatility_input = st.sidebar.slider("Volatility สมมติสำหรั�
 risk_free_rate = 0.025
 
 # กำหนดตัวคูณสัญญา (Multiplier) ตามตลาด
-# USD Futures = 1,000 USD ต่อสัญญา, SET50 Futures = 200 บาท ต่อ 1 จุด
 contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
 trades_df = load_trades()
@@ -168,10 +172,9 @@ if not trades_df.empty:
 else:
     st.info("ยังไม่มีข้อมูลในพอร์ต กรุณาเพิ่มสัญญาจากเมนูด้านซ้าย")
 
-# --- กรองข้อมูลเฉพาะตลาดที่เลือกมาแสดง Payoff หรือรวมทั้งหมด ---
+# --- กรองข้อมูลเฉพาะตลาดที่เลือกมาแสดง Payoff ---
 st.subheader(f"📊 วิเคราะห์ Payoff และ Greeks สำหรับพอร์ต: {selected_market}")
 if not trades_df.empty:
-    # กรองเฉพาะแถวที่เป็นตลาดที่กำลังเลือกอยู่
     market_trades = trades_df[trades_df["Market"] == selected_market] if "Market" in trades_df.columns else trades_df
 
     if market_trades.empty:

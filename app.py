@@ -15,7 +15,6 @@ TRADE_FILE = "trades_advanced.csv"
 def load_trades():
     if os.path.exists(TRADE_FILE):
         df = pd.read_csv(TRADE_FILE)
-        # ตรวจสอบคอลัมน์ที่จำเป็นเผื่อไฟล์เก่า
         expected_cols = ["ID", "Strategy", "Series", "Type", "Strike", "Premium", "Contracts", "Commission", "ExpiryDate"]
         for col in expected_cols:
             if col not in df.columns:
@@ -26,34 +25,40 @@ def load_trades():
 def save_trades(df):
     df.to_csv(TRADE_FILE, index=False)
 
-# --- ดึงข้อมูล Yahoo Finance พร้อม Timestamp ---
-@st.cache_data(ttl=30)
+# --- ดึงข้อมูล Yahoo Finance พร้อมบังคับใช้เวลาปัจจุบันของระบบ ---
+@st.cache_data(ttl=10)
 def get_usd_thb():
     try:
         ticker = yf.Ticker("THB=X")
-        data = ticker.history(period="1d")
-        if not data.empty:
-            price = float(data['Close'].iloc[-1])
-            update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            return price, update_time
+        # พยายามดึงจาก fast_info ก่อนเพื่อความรวดเร็วและสดใหม่
+        price = None
+        if hasattr(ticker, "fast_info") and "last_price" in ticker.fast_info:
+            price = float(ticker.fast_info["last_price"])
+        
+        if not price:
+            data = ticker.history(period="1d", interval="1m")
+            if not data.empty:
+                price = float(data['Close'].iloc[-1])
+            else:
+                data_d = ticker.history(period="1d")
+                price = float(data_d['Close'].iloc[-1]) if not data_d.empty else 35.00
+                
+        # ใช้เวลาปัจจุบันของเครื่อง (พ่วงโซนเวลาประเทศไทย) เพื่อให้ตรงกับเวลาจริงที่กดรีเฟรช
+        update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return price, update_time
     except:
-        pass
-    return 35.00, datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return 35.00, datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 # --- ฟังก์ชันคำนวณ Black-Scholes & Greeks ---
-def bs_greeks(S, K, T, r, sigma, option_type, premium_input):
-    """คำนวณ Greeks พื้นฐาน (Delta, Gamma, Theta, Vega) สำหรับยุโรปออปชัน"""
+def bs_greeks(S, K, T, r, sigma, option_type):
     if T <= 0:
-        # กรณีหมดอายุแล้ว
         if option_type == "Call":
             delta = 1.0 if S > K else 0.0
         else:
             delta = -1.0 if S < K else 0.0
         return {"Delta": delta, "Gamma": 0.0, "Theta": 0.0, "Vega": 0.0}
     
-    # ถ้าผู้ใช้ใส่พรีเมี่ยมมา สามารถใช้implied volคร่าวๆ ได้ แต่นี่ใช้ค่าสมมติมาตรฐานหรือคำนวณจาก Black-Scholes
-    vol = sigma if sigma > 0 else 0.10 # 10% Volatility โดยปริยายสำหรับ USD/THB
-    
+    vol = sigma if sigma > 0 else 0.08
     d1 = (np.log(S / K) + (r + 0.5 * vol ** 2) * T) / (vol * np.sqrt(T))
     d2 = d1 - vol * np.sqrt(T)
     
@@ -74,21 +79,21 @@ st.title("📈 TFEX USD/THB Options & Futures Pro Dashboard")
 st.markdown("ระบบวิเคราะห์ Payoff Chart, Greeks, เวลาคงเหลือ, จุดคุ้มทุน และบันทึกประวัติการเทรดแบบเรียลไทม์")
 
 # ส่วนดึงราคาอ้างอิงและรีเฟรช
-col_r1, col_r2, col_r3 = st.columns([2, 2, 3])
+col_r1, col_r2, col_r3 = st.columns([2, 3, 3])
 with col_r1:
-    if st.button("🔄 รีเฟรชราคาตลาดเดี๋ยวนี้"):
+    if st.button("🔄 รีเฟรชราคาตลาดทันที"):
         st.cache_data.clear()
         st.rerun()
 
 current_spot, last_update_time = get_usd_thb()
 
 with col_r2:
-    st.markdown(f"**เวลาอัปเดตล่าสุด:** `{last_update_time}`")
+    st.markdown(f"**เวลาอัปเดตล่าสุด (ระบบ):** `{last_update_time}`")
 
 st.sidebar.header("⚙️ ตั้งค่าตลาดและพอร์ต")
 spot_price = st.sidebar.number_input("ราคาอ้างอิงปัจจุบัน (Spot/Futures)", value=float(current_spot), format="%.4f")
 volatility_input = st.sidebar.slider("Volatility สมมติสำหรับคำนวณ Greeks (%)", 1.0, 50.0, 8.0) / 100.0
-risk_free_rate = 0.025 # ดอกเบี้ยไร้ความเสี่ยง 2.5%
+risk_free_rate = 0.025
 
 trades_df = load_trades()
 
@@ -96,7 +101,7 @@ trades_df = load_trades()
 st.sidebar.subheader("➕ เพิ่ม / จัดการสถานะการเทรด")
 with st.sidebar.form("trade_form"):
     strategy_name = st.text_input("ชื่อกลยุทธ์ / Note", "Strategy #1")
-    series_name = st.text_input("ซีรีส์ TFEX (เช่น USDU26)", "USDU26")
+    series_name = st.selectbox("ซีรีส์ TFEX", ["USDU26", "USDZ26", "USDH27", "USDM27", "อื่นๆ"])
     position_type = st.selectbox("ประเภทสัญญา", [
         "Long Futures", "Short Futures", 
         "Long Call Option", "Short Call Option", 
@@ -127,10 +132,9 @@ with st.sidebar.form("trade_form"):
         st.sidebar.success("เพิ่มข้อมูลสำเร็จ!")
         st.rerun()
 
-# --- แสดงตารางจัดการข้อมูลพอร์ต ---
-st.subheader("📋 รายการเทรดในพอร์ต (จัดการข้อมูล / ลบ)")
+# --- แสดงตารางจัดการข้อมูลพอร์ต (แก้ไข / ลบได้) ---
+st.subheader("📋 รายการเทรดในพอร์ต (สามารถแก้ไขตารางหรือลบได้โดยตรง)")
 if not trades_df.empty:
-    # เพิ่มช่องให้เลือกติ๊กเพื่อลบ
     edited_df = st.data_editor(trades_df, num_rows="dynamic", use_container_width=True, key="trade_editor")
     
     col_btn1, col_btn2 = st.columns([1, 4])
@@ -161,15 +165,12 @@ if not trades_df.empty:
     with c_opt4:
         show_breakeven = st.checkbox("แสดงจุดคุ้มทุน (Break-even)", value=True)
 
-    # ช่วงราคาอ้างอิง ณ วันหมดอายุ (+/- 15%)
     price_range = np.linspace(spot_price * 0.85, spot_price * 1.15, 400)
     total_payoff = np.zeros_like(price_range)
     total_greeks = {"Delta": 0.0, "Gamma": 0.0, "Theta": 0.0, "Vega": 0.0}
     
-    multiplier = 1000 # 1 สัญญา TFEX USD = 1,000 USD
-    
+    multiplier = 1000 
     fig, ax = plt.subplots(figsize=(12, 6))
-    
     today = date.today()
     
     for idx, row in trades_df.iterrows():
@@ -179,7 +180,6 @@ if not trades_df.empty:
         qty = int(row["Contracts"])
         comm_total = float(row["Commission"]) * qty if include_comm else 0.0
         
-        # คำนวณ Time to Expiry (T) เป็นปี
         try:
             exp_d = datetime.strptime(str(row["ExpiryDate"]), "%Y-%m-%d").date()
             days_to_expiry = (exp_d - today).days
@@ -189,10 +189,8 @@ if not trades_df.empty:
             T = 30 / 365.0
             
         mult_qty = qty * multiplier if payoff_mode == "บาทรวม (THB)" else qty
-        
         payoff = np.zeros_like(price_range)
         
-        # คำนวณ Payoff ตามประเภท
         if p_type == "Long Futures":
             payoff = (price_range - stk) * mult_qty - comm_total
         elif p_type == "Short Futures":
@@ -208,38 +206,36 @@ if not trades_df.empty:
             
         total_payoff += payoff
         
-        # คำนวณ Greeks ของสัญญาชิ้นนี้
         opt_flag = "Call" if "Call" in p_type else ("Put" if "Put" in p_type else None)
         if opt_flag:
-            g = bs_greeks(spot_price, stk, T, risk_free_rate, volatility_input, opt_flag, prem)
+            g = bs_greeks(spot_price, stk, T, risk_free_rate, volatility_input, opt_flag)
             dir_sign = 1 if "Long" in p_type else -1
             total_greeks["Delta"] += g["Delta"] * qty * multiplier * dir_sign
             total_greeks["Gamma"] += g["Gamma"] * qty * multiplier * dir_sign
             total_greeks["Theta"] += g["Theta"] * qty * dir_sign
             total_greeks["Vega"] += g["Vega"] * qty * multiplier * dir_sign
         else:
-            # Futures Greeks
             dir_sign = 1 if "Long" in p_type else -1
             total_greeks["Delta"] += 1.0 * qty * multiplier * dir_sign
 
-        # พล็อตกราฟแยกแต่ละขา (เส้นบางๆ)
-        ax.plot(price_range, payoff, linestyle="--", alpha=0.3, label=f"{row['Strategy']} ({row['Series']} {p_type}) [เหลือ {days_to_expiry} วัน]")
+        # กราฟย่อยแต่ละขา (เส้นบางๆ) พร้อมระบุซีรีส์และวันหมดอายุ
+        ax.plot(price_range, payoff, linestyle="--", alpha=0.3, label=f"{row['Strategy']} ({row['Series']} | {p_type}) [เหลือ {days_to_expiry} วัน]")
 
-        # ถ้าเลือกให้แสดงเส้น Greeks จำลองล่วงหน้า 7 วัน (Time Decay effect)
+        # เส้นจำลอง T-7 วัน (ถ้าเลือกเปิดใช้งาน)
         if show_greeks_lines and opt_flag and T > 7/365:
-            T_minus_7 = (days_to_expiry - 7) / 365.0
+            T_minus_7 = max((days_to_expiry - 7), 0) / 365.0
             payoff_t7 = np.zeros_like(price_range)
-            # ประมาณการราคาออปชันล่วงหน้าอย่างง่ายด้วย Black-Scholes ที่เวลาลดลง
-            # (เพื่อความกระชับ แสดงเส้นประจำลองแนวโน้มมูลค่าลดลง)
-            
-    # พล็อตกราฟรวมพอร์ต
-    ax.plot(price_range, total_payoff, color="blue", linewidth=3, label="Total Portfolio Payoff (Expiry)")
-    
-    # เส้นศูนย์ (Break-even line Y=0)
+            for i, p_val in enumerate(price_range):
+                g_t7 = bs_greeks(p_val, stk, T_minus_7, risk_free_rate, volatility_input, opt_flag)
+                # ประมาณการค่าพรีเมี่ยมตามทฤษฎีคร่าวๆ
+                # สามารถเพิ่มโค้ดแสดงเส้นประสีจางได้ที่นี่
+                pass
+
+    # กราฟรวมพอร์ตหลัก
+    ax.plot(price_range, total_payoff, color="blue", linewidth=3, label="Total Portfolio Payoff (At Expiry)")
     ax.axhline(0, color="black", linewidth=1, linestyle="-")
     
-    # เส้นราคาปัจจุบัน (Spot Price Marker)
-    # คำนวณ P&L ปัจจุบันที่ราคา Spot นี้
+    # คำนวณ P&L ปัจจุบัน ณ ราคา Spot ปัจจุบัน
     current_portfolio_pnl = 0
     for idx, row in trades_df.iterrows():
         p_type = row["Type"]
@@ -262,12 +258,12 @@ if not trades_df.empty:
         elif p_type == "Short Put Option":
             current_portfolio_pnl += (prem - np.maximum(0, stk - spot_price)) * mult_qty - comm_total
 
+    # เส้นแสดงตำแหน่งปัจจุบันบนกราฟ
     ax.axvline(spot_price, color="red", linestyle=":", linewidth=2, label=f"Current Spot: {spot_price:.2f} (P&L: {current_portfolio_pnl:,.2f})")
-    ax.scatter([spot_price], [current_portfolio_pnl], color="red", zorder=5)
+    ax.scatter([spot_price], [current_portfolio_pnl], color="red", s=80, zorder=5)
 
-    # คำนวณและแสดงจุดคุ้มทุน (Break-even Points)
+    # จุดคุ้มทุน (Break-even Points)
     if show_breakeven:
-        # หาจุดที่ total_payoff ตัด 0
         sign_change = np.where(np.diff(np.sign(total_payoff)))[0]
         for idx_be in sign_change:
             p_be = price_range[idx_be]
@@ -282,13 +278,13 @@ if not trades_df.empty:
     
     st.pyplot(fig)
     
-    # --- แสดงสรุป Greeks รวมพอร์ต ---
-    st.subheader("📐 สรุปค่า Greeks รวมทั้งพอร์ต (Portfolio Greeks)")
+    # --- สรุป Greeks รวมพอร์ต ---
+    st.subheader("📐 สรุปค่า Greeks และสถานะพอร์ต")
     g1, g2, g3, g4 = st.columns(4)
-    g1.metric("Portfolio Delta", f"{total_greeks['Delta']:,.2f}", help="ความอ่อนไหวต่อการเปลี่ยนแปลงของราคา Spot 1 บาท")
-    g2.metric("Portfolio Gamma", f"{total_greeks['Gamma']:,.4f}", help="อัตราการเปลี่ยนแปลงของ Delta เมื่อ Spot เปลี่ยน")
-    g3.metric("Portfolio Theta (Daily)", f"{total_greeks['Theta']:,.2f} THB/วัน", help="กำไร/ขาดทุนที่เปลี่ยนไปเมื่อเวลาผ่านไป 1 วัน (Time Decay)")
-    g4.metric("Portfolio Vega", f"{total_greeks['Vega']:,.2f}", help="ความอ่อนไหวต่อความผันผวน (Volatility) ที่เปลี่ยนไป 1%")
+    g1.metric("Portfolio Delta", f"{total_greeks['Delta']:,.2f}", help="ความอ่อนไหวต่อราคา Spot")
+    g2.metric("Portfolio Gamma", f"{total_greeks['Gamma']:,.4f}")
+    g3.metric("Portfolio Theta (Daily)", f"{total_greeks['Theta']:,.2f} THB", help="ผลกระทบจากเวลาที่ลดลง 1 วัน")
+    g4.metric("Portfolio Vega", f"{total_greeks['Vega']:,.2f}")
 
 else:
     st.warning("กรุณาเพิ่มข้อมูลสัญญาอย่างน้อย 1 รายการเพื่อแสดงกราฟและค่า Greeks")

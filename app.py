@@ -47,12 +47,9 @@ def get_market_data(market_type):
         if hasattr(ticker, "fast_info") and "last_price" in ticker.fast_info:
             price = float(ticker.fast_info["last_price"])
         
-        # ดึงข้อมูลHistorical 6 เดือนเพื่อคำนวณ Annualized Volatility
         hist = ticker.history(period="6mo")
         if not hist.empty and len(hist) > 1:
-            # คำนวณ Log Returns
             hist['Log_Return'] = np.log(hist['Close'] / hist['Close'].shift(1))
-            # คำนวณ Standard Deviation และ Annualize (252 วันทำการ)
             daily_vol = hist['Log_Return'].std()
             calc_vol = float(daily_vol * np.sqrt(252))
             if np.isnan(calc_vol) or calc_vol <= 0:
@@ -74,7 +71,25 @@ def get_market_data(market_type):
         update_time = datetime.now(BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S (ICT / UTC+7)")
         return default_p, default_v, update_time
 
-# --- ฟังก์ชันคำนวณ Black-Scholes & Greeks ---
+# --- ฟังก์ชัน Black-Scholes สำหรับ Option Pricing (ใช้วาดกราฟรายวัน) ---
+def bs_option_price(S, K, T, r, sigma, option_type):
+    if T <= 0:
+        if option_type == "Call":
+            return np.maximum(0, S - K)
+        else:
+            return np.maximum(0, K - S)
+    
+    vol = sigma if sigma > 0 else 0.15
+    d1 = (np.log(S / K) + (r + 0.5 * vol ** 2) * T) / (vol * np.sqrt(T))
+    d2 = d1 - vol * np.sqrt(T)
+    
+    if option_type == "Call":
+        price = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+    else:
+        price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(d1)
+    return price
+
+# --- ฟังก์ชันคำนวณ Greeks ---
 def bs_greeks(S, K, T, r, sigma, option_type):
     if T <= 0:
         if option_type == "Call":
@@ -101,7 +116,7 @@ def bs_greeks(S, K, T, r, sigma, option_type):
 
 # --- UI หลัก ---
 st.title("📈 TFEX Multi-Asset Options & Futures Pro Dashboard")
-st.markdown("ระบบวิเคราะห์ Payoff Chart (USD/THB และ SET50), Interactive Hover, Greeks, และบันทึกประวัติการเทรด (เวลาไทย UTC+7)")
+st.markdown("ระบบวิเคราะห์ Payoff Chart (USD/THB และ SET50), Interactive Hover, Greeks, และการจำลอง Payoff รายวัน")
 
 # เลือกตลาดหลักใน Sidebar
 st.sidebar.header("⚙️ เลือกตลาดและตั้งค่า")
@@ -120,8 +135,6 @@ with col_r2:
     st.markdown(f"**ตลาด:** `{selected_market}` | **อัปเดตล่าสุด:** `{last_update_time}`")
 
 spot_price = st.sidebar.number_input(f"ราคาอ้างอิงปัจจุบัน ({selected_market})", value=float(current_spot), format="%.4f")
-
-# แสดงค่า Volatility ที่ดึงมาแบบอัตโนมัติ และให้ผู้ใช้ปรับแต่งต่อได้
 volatility_input = st.sidebar.slider(
     "Volatility (%) [คำนวณอัตโนมัติจากตลาด]", 
     1.0, 100.0, 
@@ -129,8 +142,6 @@ volatility_input = st.sidebar.slider(
 ) / 100.0
 
 risk_free_rate = 0.025
-
-# กำหนดตัวคูณสัญญา (Multiplier) ตามตลาด
 contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
 trades_df = load_trades()
@@ -195,8 +206,15 @@ if not trades_df.empty:
 else:
     st.info("ยังไม่มีข้อมูลในพอร์ต กรุณาเพิ่มสัญญาจากเมนูด้านซ้ายเพื่อเริ่มต้นบันทึกข้อมูล")
 
-# --- แสดงผลกราฟ Payoff และ Greeks เสมอ ---
-st.subheader(f"📊 วิเคราะห์ Payoff และ Greeks สำหรับพอร์ต: {selected_market}")
+# --- กรองข้อมูลเฉพาะตลาดที่เลือก ---
+market_trades = pd.DataFrame()
+if not trades_df.empty and "Market" in trades_df.columns:
+    market_trades = trades_df[trades_df["Market"] == selected_market]
+
+# ==========================================
+# กราฟที่ 1: Payoff ณ วันหมดอายุ (Expiry Payoff)
+# ==========================================
+st.subheader(f"📊 1. วิเคราะห์ Payoff ณ วันหมดอายุ ({selected_market})")
 
 c_opt1, c_opt2, c_opt3, c_opt4 = st.columns(4)
 with c_opt1:
@@ -214,10 +232,6 @@ total_greeks = {"Delta": 0.0, "Gamma": 0.0, "Theta": 0.0, "Vega": 0.0}
 
 today = date.today()
 fig = go.Figure()
-
-market_trades = pd.DataFrame()
-if not trades_df.empty and "Market" in trades_df.columns:
-    market_trades = trades_df[trades_df["Market"] == selected_market]
 
 if not market_trades.empty:
     for idx, row in market_trades.iterrows():
@@ -346,14 +360,102 @@ fig.update_layout(
     yaxis_title=f"Profit / Loss ({payoff_mode})",
     hovermode="x unified",
     template="plotly_white",
-    height=600,
+    height=550,
     legend=dict(x=0.01, y=0.99, bgcolor='rgba(255,255,255,0.8)')
 )
 
 st.plotly_chart(fig, use_container_width=True)
 
+
+# ==========================================
+# กราฟที่ 2: จำลอง Payoff แบบรายวัน (Daily Time Decay Simulation)
+# ==========================================
+st.subheader(f"⏱️ 2. จำลองกราฟ Payoff รายวัน (Time Decay Simulation)")
+st.markdown("แสดงเส้นมูลค่าพอร์ตจำลองล่วงหน้าตามจำนวนวันที่เหลืออยู่ก่อนหมดอายุ (สเตปละ 0, 7, 15, 30 วัน หรือตามวันหมดอายุจริง)")
+
+fig_daily = go.Figure()
+
+if not market_trades.empty:
+    # หาค่าวันหมดอายุสูงสุดในพอร์ตเพื่อทำ Simulation ช่วงเวลา
+    max_days = 30
+    for idx, row in market_trades.iterrows():
+        try:
+            exp_d = datetime.strptime(str(row["ExpiryDate"]), "%Y-%m-%d").date()
+            d_rem = (exp_d - today).days
+            if d_rem > max_days:
+                max_days = d_rem
+        except:
+            pass
+
+    # กำหนดจุดเวลาที่จะนำมาวาดจำลอง (เช่น วันนี้, อีก 7 วัน, อีก 15 วัน, อีก 30 วัน และวันหมดอายุ 0)
+    step_days = sorted(list(set([0, min(max_days, 7), min(max_days, 15), min(max_days, 30), max_days])))
+    
+    # สีสำหรับแต่ละเส้นเวลา (ไล่เฉด)
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+
+    for i, d_rem in enumerate(step_days):
+        T_sim = max(d_rem, 0) / 365.0
+        daily_portfolio_value = np.zeros_like(price_range)
+
+        for idx, row in market_trades.iterrows():
+            p_type = row["Type"]
+            stk = float(row["Strike"])
+            prem = float(row["Premium"])
+            qty = int(row["Contracts"])
+            comm_total = float(row["Commission"]) * qty if include_comm else 0.0
+            mult_qty = qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty
+
+            if p_type == "Long Futures":
+                val = (price_range - stk) * mult_qty - comm_total
+            elif p_type == "Short Futures":
+                val = (stk - price_range) * mult_qty - comm_total
+            elif "Call" in p_type:
+                # คำนวณมูลค่าทางทฤษฎี Black-Scholes ตาม T_sim
+                opt_values = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Call") for p in price_range])
+                if "Long" in p_type:
+                    val = (opt_values - prem) * mult_qty - comm_total
+                else:
+                    val = (prem - opt_values) * mult_qty - comm_total
+            elif "Put" in p_type:
+                opt_values = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Put") for p in price_range])
+                if "Long" in p_type:
+                    val = (opt_values - prem) * mult_qty - comm_total
+                else:
+                    val = (prem - opt_values) * mult_qty - comm_total
+            else:
+                val = 0
+
+            daily_portfolio_value += val
+
+        line_color = colors[i % len(colors)]
+        line_width = 3 if d_rem == 0 else 1.5
+        line_dash = 'solid' if d_rem == 0 else 'dash'
+
+        fig_daily.add_trace(go.Scatter(
+            x=price_range, y=daily_portfolio_value,
+            mode='lines',
+            name=f"เหลือเวลา {d_rem} วัน (T = {d_rem}d)",
+            line=dict(color=line_color, width=line_width, dash=line_dash),
+            hovertemplate=f"<b>เหลือ {d_rem} วัน</b><br>Price: %{{x:.2f}}<br>Value: %{{y:,.2f}}<extra></extra>"
+        ))
+
+fig_daily.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
+fig_daily.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
+
+fig_daily.update_layout(
+    title=f"Time Decay Payoff Simulation ({selected_market})",
+    xaxis_title="Underlying Price",
+    yaxis_title=f"Portfolio Value ({payoff_mode})",
+    hovermode="x unified",
+    template="plotly_white",
+    height=500,
+    legend=dict(x=0.01, y=0.99, bgcolor='rgba(255,255,255,0.8)')
+)
+
+st.plotly_chart(fig_daily, use_container_width=True)
+
 if market_trades.empty:
-    st.info(f"💡 ขณะนี้ยังไม่มีรายการเทรดในตลาด `{selected_market}` กราฟด้านบนแสดงเส้นเปล่า (Flat Line) คุณสามารถเพิ่มรายการเทรดจากฟอร์มด้านซ้ายเพื่อทดลองดูเส้น Payoff ได้ทันที")
+    st.info(f"💡 ขณะนี้ยังไม่มีรายการเทรดในตลาด `{selected_market}` กรุณาเพิ่มรายการเทรดจากเมนูด้านซ้ายเพื่อแสดงกราฟจำลองรายวัน")
 
 st.subheader("📐 สรุปค่า Greeks และสถานะพอร์ต")
 g1, g2, g3, g4 = st.columns(4)

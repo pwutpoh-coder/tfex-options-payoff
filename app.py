@@ -580,7 +580,7 @@ if not market_trades.empty:
         unique_trade_dates.append(sim_date_str)
         unique_trade_dates = sorted(unique_trade_dates)
 
-    # กราฟที่ 2.1: เฉพาะสัญญาที่เทรดในวันนั้นๆ
+    # กราฟที่ 2.1: เฉพาะสัญญาที่เทรดในวันนั้นๆ (รวมทุกสัญญาที่เปิดในวันเดียวกันอย่างถูกต้อง)
     for i, t_date_str in enumerate(unique_trade_dates):
         try:
             t_d = datetime.strptime(t_date_str, "%Y-%m-%d").date()
@@ -646,7 +646,7 @@ if not market_trades.empty:
                     hoverinfo='skip'
                 ))
 
-    # กราฟที่ 2.2: แบบสะสมยอดรวมถึงวันที่เลือก
+    # กราฟที่ 2.2: แบบสะสมยอดรวมถึงวันที่เลือก (รวมพอร์ตทั้งหมดที่สะสมมาถึงวันนั้นๆ อย่างถูกต้อง)
     for i, t_date_str in enumerate(unique_trade_dates):
         if t_date_str > sim_date_str:
             continue

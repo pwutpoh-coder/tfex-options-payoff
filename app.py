@@ -421,7 +421,7 @@ else:
     st.info("ไม่มีข้อมูลสัญญาในตลาดนี้")
 
 # ==========================================
-# กราฟที่ 1: Payoff ณ วันหมดอายุ (กำไรฟ้าอ่อน / ขาดทุนแดงอ่อน)
+# กราฟที่ 1: Payoff ณ วันหมดอายุ (พร้อม Spot ป้ายด้านบน และจุดคุ้มทุน BEP)
 # ==========================================
 st.subheader(f"📈 1. Payoff รวม ณ วันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วยแสดงผล", ["บาทรวม (THB)", "จุด (Points)"])
@@ -489,7 +489,7 @@ if not market_trades.empty:
             hovertemplate=f"<b>{row['Strategy']}</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
         ))
 
-# เพิ่มกราฟ Net Payoff พร้อมแยกสีพื้นที่ใต้กราฟ (กำไร = ฟ้าอ่อน, ขาดทุน = แดงอ่อน)
+# เพิ่มกราฟ Net Payoff (กำไรฟ้าอ่อน)
 fig.add_trace(go.Scatter(
     x=price_range, y=total_payoff,
     mode='lines',
@@ -512,8 +512,44 @@ fig.add_trace(go.Scatter(
     hoverinfo='skip'
 ))
 
+# --- คำนวณหาจุดคุ้มทุน (Break-even Points - BEP) ---
+sign_changes = np.where(np.diff(np.signbit(total_payoff)))[0]
+bep_prices = []
+for idx_sc in sign_changes:
+    x1, x2 = price_range[idx_sc], price_range[idx_sc + 1]
+    y1, y2 = total_payoff[idx_sc], total_payoff[idx_sc + 1]
+    if y2 - y1 != 0:
+        bep = x1 - y1 * (x2 - x1) / (y2 - y1)
+        bep_prices.append(bep)
+
+if bep_prices:
+    fig.add_trace(go.Scatter(
+        x=bep_prices,
+        y=[0] * len(bep_prices),
+        mode='markers+text',
+        name='Break-even (BEP)',
+        marker=dict(color='orange', size=10, symbol='diamond'),
+        text=[f"BEP: {bep:.2f}" for bep in bep_prices],
+        textposition="top center",
+        hoverinfo='text'
+    ))
+
 fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 fig.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
+
+# เพิ่ม Annotations แสดงราคาอ้างอิงไว้ที่ด้านบนสุดของเส้น Spot (ไม่ทับตัวกราฟหลัก)
+fig.add_annotation(
+    x=spot_price,
+    y=1.0,
+    yref="paper",
+    text=f"Spot: {spot_price:,.2f}",
+    showarrow=False,
+    font=dict(color="red", size=12, family="sans-serif"),
+    bgcolor="rgba(255, 255, 255, 0.8)",
+    bordercolor="red",
+    borderwidth=1,
+    borderpad=4
+)
 
 fig.update_layout(
     title=f"Net Expiry Payoff ({payoff_mode})",
@@ -528,7 +564,7 @@ fig.update_layout(
 st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
-# กราฟที่ 2 & 3: จำลองรายวัน (แยกสีฟ้าอ่อน/แดงอ่อน) และแสดง Greeks
+# กราฟที่ 2 & 3: จำลองรายวัน (พร้อม Spot ป้ายด้านบน) และแสดง Greeks
 # ==========================================
 st.subheader("⏱️ 2. จำลองกราฟ Payoff รายวัน (Time Decay Simulation)")
 sim_date = st.date_input("เลือกวันที่ต้องการจำลองสถานะ", value=date.today())
@@ -676,8 +712,13 @@ if not market_trades.empty:
                 hoverinfo='skip'
             ))
 
+# เพิ่มเส้นอ้างอิงและป้าย Spot ด้านบนให้กับกราฟจำลองรายวันทั้งสอง
 fig_daily_single.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 fig_daily_single.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
+fig_daily_single.add_annotation(
+    x=spot_price, y=1.0, yref="paper", text=f"Spot: {spot_price:,.2f}",
+    showarrow=False, font=dict(color="red", size=12), bgcolor="rgba(255, 255, 255, 0.8)", bordercolor="red", borderwidth=1, borderpad=4
+)
 fig_daily_single.update_layout(
     title="กราฟเฉพาะวันที่เทรด (Trades on Specific Date)",
     xaxis_title="Underlying Price", yaxis_title=f"Value ({payoff_mode})",
@@ -687,6 +728,10 @@ fig_daily_single.update_layout(
 
 fig_daily_cumulative.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 fig_daily_cumulative.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
+fig_daily_cumulative.add_annotation(
+    x=spot_price, y=1.0, yref="paper", text=f"Spot: {spot_price:,.2f}",
+    showarrow=False, font=dict(color="red", size=12), bgcolor="rgba(255, 255, 255, 0.8)", bordercolor="red", borderwidth=1, borderpad=4
+)
 fig_daily_cumulative.update_layout(
     title="กราฟสะสมยอดรวมถึงวันที่เลือก (Cumulative Portfolio Value)",
     xaxis_title="Underlying Price", yaxis_title=f"Value ({payoff_mode})",

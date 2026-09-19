@@ -421,7 +421,7 @@ else:
     st.info("ไม่มีข้อมูลสัญญาในตลาดนี้")
 
 # ==========================================
-# กราฟที่ 1: Payoff ณ วันหมดอายุ (กระชับ ไม่รกตา)
+# กราฟที่ 1: Payoff ณ วันหมดอายุ (ใส่สีพื้นหลัง กำไรฟ้าอ่อน / ขาดทุนแดงอ่อน)
 # ==========================================
 st.subheader(f"📈 1. Payoff รวม ณ วันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วยแสดงผล", ["บาทรวม (THB)", "จุด (Points)"])
@@ -440,7 +440,6 @@ if not market_trades.empty:
         prem = float(row["Premium"])
         qty = int(row["Contracts"])
         status = row["Status"]
-        comm_total = float(row["Commission"]) * qty
         sign_multiplier = 1 if status == "Open" else -1
         
         try:
@@ -481,7 +480,6 @@ if not market_trades.empty:
                 dir_sign = 1 if "Long" in p_type else -1
                 total_greeks["Delta"] += 1.0 * qty * contract_multiplier * dir_sign
 
-        # ซ่อนรายละเอียดเส้นย่อยไม่ให้รก แสดงเฉพาะชื่อและ P&L สั้นๆ เมื่อชี้
         fig.add_trace(go.Scatter(
             x=price_range, y=payoff,
             mode='lines',
@@ -491,11 +489,14 @@ if not market_trades.empty:
             hovertemplate=f"<b>{row['Strategy']}</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
         ))
 
+# เพิ่มกราฟ Net Payoff พร้อมระบายสีใต้กราฟ (กำไร = ฟ้าอ่อน, ขาดทุน = แดงอ่อน)
 fig.add_trace(go.Scatter(
     x=price_range, y=total_payoff,
     mode='lines',
     name='Net Portfolio Payoff',
     line=dict(color='blue', width=3),
+    fill='tozeroy',
+    fillcolor='rgba(0, 123, 255, 0.1)',
     hovertemplate="<b>Net Portfolio</b><br>Price: %{x:.2f}<br>Total P&L: %{y:,.2f}<extra></extra>"
 ))
 
@@ -515,7 +516,7 @@ fig.update_layout(
 st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
-# กราฟที่ 2 & 3: จำลองรายวัน (แยกตามวัน และ แบบสะสม)
+# กราฟที่ 2 & 3: จำลองรายวัน พร้อมระบายสีพื้นหลัง และแสดงค่า Greeks
 # ==========================================
 st.subheader("⏱️ 2. จำลองกราฟ Payoff รายวัน (Time Decay Simulation)")
 sim_date = st.date_input("เลือกวันที่ต้องการจำลองสถานะ", value=date.today())
@@ -582,6 +583,8 @@ if not market_trades.empty:
                 mode='lines',
                 name=f"Trades on {t_date_str}" + (" ⭐ (Selected)" if is_selected else ""),
                 line=dict(color=line_color, width=3 if is_selected else 1.5, dash='solid' if is_selected else 'dash'),
+                fill='tozeroy' if is_selected else None,
+                fillcolor='rgba(0, 123, 255, 0.08)' if is_selected else None,
                 hovertemplate=f"<b>Date: {t_date_str}</b><br>Price: %{{x:.2f}}<br>Value: %{{y:,.2f}}<extra></extra>"
             ))
 
@@ -634,6 +637,8 @@ if not market_trades.empty:
             mode='lines',
             name=f"Cumulative up to {t_date_str}" + (" ⭐ (Selected)" if is_selected else ""),
             line=dict(color=line_color, width=3.5 if is_selected else 1.5, dash='solid' if is_selected else 'dash'),
+            fill='tozeroy' if is_selected else None,
+            fillcolor='rgba(0, 123, 255, 0.08)' if is_selected else None,
             hovertemplate=f"<b>Cumulative to {t_date_str}</b><br>Price: %{{x:.2f}}<br>Value: %{{y:,.2f}}<extra></extra>"
         ))
 
@@ -659,7 +664,7 @@ st.plotly_chart(fig_daily_single, use_container_width=True)
 st.plotly_chart(fig_daily_cumulative, use_container_width=True)
 
 # ==========================================
-# สรุปค่า Greeks
+# สรุปค่า Greeks รวมพอร์ต (นำกลับมาแสดงผลปกติ)
 # ==========================================
 st.subheader("📐 สรุปค่า Greeks รวมพอร์ต")
 g1, g2, g3, g4 = st.columns(4)

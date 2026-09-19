@@ -34,6 +34,8 @@ def load_trades_from_file(file_name):
                     df[col] = "Open"
                 elif col == "TradeDate":
                     df[col] = str(date.today())
+                elif col == "ExpiryDate":
+                    df[col] = str(date.today() + timedelta(days=30))
                 elif col == "EntrySpot":
                     df[col] = 0.0
                 elif col in ["Strike", "Premium", "Contracts", "Commission", "ID"]:
@@ -203,7 +205,6 @@ short_year = str(current_year)[-2:]
 next_short_year = str(current_year + 1)[-2:]
 
 prefix_code = "USD" if selected_market == "TFEX USD/THB" else "S50"
-# รหัสเดือน TFEX (H=มี.ค., M=มิ.ย., U=ก.ย., Z=ธ.ค. และรหัสเดือนรายเดือนอื่นๆ)
 month_codes = ["H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]
 
 generated_series_options = []
@@ -211,16 +212,15 @@ for yr in [short_year, next_short_year]:
     for m in month_codes:
         generated_series_options.append(f"{prefix_code}{m}{yr}")
 
-# --- ฟอร์มเพิ่ม / แก้ไขรายการเทรดลงในพอร์ตหลัก ---
+# --- ฟอร์มเพิ่มรายการเทรดลงในพอร์ตหลัก ---
 st.sidebar.subheader(f"➕ เพิ่มสถานะการเทรด (ลงในพอร์ต: {active_portfolio})")
 with st.sidebar.form("trade_form"):
     strategy_name = st.text_input("ชื่อกลยุทธ์ / Note", "Strategy #1")
     
-    # 📌 ปรับปรุงให้ Series เป็น Dropdown พร้อมรองรับพิมพ์เพิ่มเอง
     series_mode = st.radio("เลือกรูปแบบซีรีส์ (Series)", ["เลือกจาก Dropdown มาตรฐาน", "พิมพ์ระบุเอง"])
     if series_mode == "เลือกจาก Dropdown มาตรฐาน":
         default_series_idx = 6 if "U" + short_year in generated_series_options else 0
-        series_name = st.sidebar.selectbox("เลือกซีรีส์ TFEX", options=generated_series_options, index=default_series_idx) if "sidebar" in locals() else st.selectbox("เลือกซีรีส์ TFEX", options=generated_series_options, index=default_series_idx)
+        series_name = st.selectbox("เลือกซีรีส์ TFEX", options=generated_series_options, index=default_series_idx)
     else:
         default_custom = f"{prefix_code}U{short_year}"
         series_name = st.text_input("พิมพ์รหัสซีรีส์เอง", value=default_custom)
@@ -281,9 +281,12 @@ with st.sidebar.form("trade_form"):
         st.sidebar.success(f"บันทึกข้อมูลลงใน {active_portfolio} สำเร็จ!")
         st.rerun()
 
-# --- แสดงตารางจัดการข้อมูลพอร์ตหลัก (แก้ไข / ลบได้) ---
+# ==========================================
+# ส่วนจัดการตาราง: แก้ไขข้อมูล หรือ เลือกแถวเพื่อลบพร้อมระบบยืนยัน
+# ==========================================
 st.subheader(f"📋 รายการเทรดในพอร์ตหลักปัจจุบัน: `{active_portfolio}`")
 if not trades_df.empty:
+    st.markdown("💡 *คุณสามารถแก้ไขข้อมูลโดยตรงในตารางด้านล่างนี้ได้เลย หรือใช้ปุ่มบันทึกการแก้ไขด้านล่าง*")
     edited_df = st.data_editor(trades_df, num_rows="dynamic", use_container_width=True, key="trade_editor")
     
     col_btn1, col_btn2 = st.columns([1, 4])
@@ -292,11 +295,34 @@ if not trades_df.empty:
             save_trades_to_file(edited_df, active_portfolio)
             st.success("บันทึกการเปลี่ยนแปลงเรียบร้อย!")
             st.rerun()
-    with col_btn2:
-        if st.button(f"🗑️ ล้างข้อมูลทั้งหมดใน {active_portfolio}"):
-            empty_df = pd.DataFrame(columns=["ID", "Market", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot"])
-            save_trades_to_file(empty_df, active_portfolio)
-            st.rerun()
+            
+    st.markdown("---")
+    st.subheader("🗑️ ระบบลบรายการเทรดทีละบรรทัด (พร้อมยืนยันความปลอดภัย)")
+    
+    del_col1, del_col2, del_col3 = st.columns([2, 2, 2])
+    with del_col1:
+        trade_ids_to_delete = st.selectbox(
+            "เลือก ID รายการที่ต้องการลบ", 
+            options=edited_df["ID"].tolist() if not edited_df.empty else []
+        )
+    with del_col2:
+        confirm_delete = st.checkbox("⚠️ ยืนยันการลบรายการนี้", value=False)
+    with del_col3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🗑️ ลบรายการที่เลือก"):
+            if confirm_delete:
+                updated_trades = edited_df[edited_df["ID"] != trade_ids_to_delete].reset_index(drop=True)
+                save_trades_to_file(updated_trades, active_portfolio)
+                st.success(f"ลบรายการ ID: {trade_ids_to_delete} สำเร็จแล้ว!")
+                st.rerun()
+            else:
+                st.warning("กรุณากาเครื่องหมายยืนยันการลบก่อนกดปุ่ม")
+
+    if st.button(f"🗑️ ล้างข้อมูลทั้งหมดใน {active_portfolio} (ลบเกลี้ยงพอร์ต)"):
+        empty_df = pd.DataFrame(columns=["ID", "Market", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot"])
+        save_trades_to_file(empty_df, active_portfolio)
+        st.rerun()
+        
     trades_df = edited_df
 else:
     st.info(f"พอร์ต `{active_portfolio}` ยังไม่มีข้อมูล กรุณาเพิ่มสัญญาจากเมนูด้านซ้าย")

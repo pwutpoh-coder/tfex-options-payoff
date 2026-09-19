@@ -158,17 +158,17 @@ contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
 trades_df = load_trades()
 
-# --- สร้างรายการ Strike แบบ Dropdown ตามสเตปตัวเลขกลมๆ ที่ผู้ใช้ต้องการ ---
+# --- สร้างรายการ Strike แบบ Dropdown จัดรูปแบบทศนิยม (USDTHB = 2 ตำแหน่ง, SET50 = เลขจำนวนเต็ม) ---
 if selected_market == "TFEX USD/THB":
-    # ปัดราคา Spot ปัจจุบันให้ลงท้ายด้วย .00 หรือ .25 ที่ใกล้ที่สุด เพื่อเป็นศูนย์กลาง
     base_center = round(spot_price * 4) / 4.0
     step = 0.25
-    base_strikes = [round(base_center + i * step, 2) for i in range(-25, 26)]
+    # สร้างรายการเป็น float แล้วจัดฟอร์แมต string ทศนิยม 2 ตำแหน่ง
+    base_strikes = [f"{round(base_center + i * step, 2):.2f}" for i in range(-25, 26)]
 else:
-    # ปัดราคา Spot ปัจจุบันให้เป็นหลัก 10 ที่ใกล้ที่สุด (เช่น 950, 960)
     base_center = round(spot_price / 10.0) * 10.0
     step = 10.0
-    base_strikes = [round(base_center + i * step, 2) for i in range(-20, 21)]
+    # สร้างรายการเป็น int (ไม่มีทศนิยม)
+    base_strikes = [int(round(base_center + i * step)) for i in range(-20, 21)]
 
 # --- ฟอร์มเพิ่ม / แก้ไขรายการเทรด ---
 st.sidebar.subheader("➕ เพิ่มสถานะการเทรด (Gross Position)")
@@ -186,11 +186,26 @@ with st.sidebar.form("trade_form"):
     
     strike_mode = st.radio("เลือกรูปแบบราคาใช้สิทธิ (Strike)", ["เลือกจาก Dropdown (สเตปอัตโนมัติ)", "พิมพ์ระบุเอง"])
     if strike_mode == "เลือกจาก Dropdown (สเตปอัตโนมัติ)":
-        # หา index ที่ใกล้เคียงกับราคาฐานปัจจุบันที่สุดมาเป็นค่าเริ่มต้นใน Dropdown
-        closest_index = min(range(len(base_strikes)), key=lambda i: abs(base_strikes[i] - spot_price))
-        strike = st.selectbox("ราคาใช้สิทธิ (Strike)", options=base_strikes, index=closest_index)
+        # แปลงค่าใน Dropdown กลับเป็นตัวเลข float เพื่อใช้คำนวณต่อได้ทันที
+        if selected_market == "TFEX USD/THB":
+            closest_val = round(spot_price * 4) / 4.0
+            closest_str = f"{closest_val:.2f}"
+            if closest_str in base_strikes:
+                default_idx = base_strikes.index(closest_str)
+            else:
+                default_idx = len(base_strikes) // 2
+        else:
+            closest_val = int(round(spot_price / 10.0) * 10.0)
+            if closest_val in base_strikes:
+                default_idx = base_strikes.index(closest_val)
+            else:
+                default_idx = len(base_strikes) // 2
+                
+        selected_strike_item = st.selectbox("ราคาใช้สิทธิ (Strike)", options=base_strikes, index=default_idx)
+        strike = float(selected_strike_item)
     else:
-        strike = st.number_input("ระบุราคาใช้สิทธิเอง", value=float(round(spot_price, 2)), format="%.2f")
+        strike_default_val = float(round(spot_price, 2)) if selected_market == "TFEX USD/THB" else float(round(spot_price))
+        strike = st.number_input("ระบุราคาใช้สิทธิเอง", value=strike_default_val, format="%.2f" if selected_market == "TFEX USD/THB" else "%.0f")
 
     default_prem = 0.25 if selected_market == "TFEX USD/THB" else 15.0
     premium = st.number_input("ราคาพรีเมี่ยม / ต้นทุนต่อหน่วย", value=float(default_prem), format="%.2f")

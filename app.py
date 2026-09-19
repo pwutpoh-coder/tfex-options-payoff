@@ -614,10 +614,18 @@ if not market_trades.empty:
                     val = (stk - price_range) * mult_qty
                 elif "Call" in p_type:
                     opt_values = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Call") for p in price_range])
-                    val = (opt_values - prem) * mult_qty if "Long" in p_type else (prem - opt_values) * mult_qty
+                    if "Long" in p_type:
+                        val = (opt_values - prem) * mult_qty
+                    else:
+                        # แก้ไขการคำนวณ Short Call ให้ถูกต้อง (รับพรีเมี่ยมมา - จ่ายคืนตามมูลค่าออปชันทางทฤษฎี)
+                        val = (prem - opt_values) * mult_qty
                 elif "Put" in p_type:
                     opt_values = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Put") for p in price_range])
-                    val = (opt_values - prem) * mult_qty if "Long" in p_type else (prem - opt_values) * mult_qty
+                    if "Long" in p_type:
+                        val = (opt_values - prem) * mult_qty
+                    else:
+                        # แก้ไขการคำนวณ Short Put ให้ถูกต้อง (รับพรีเมี่ยมมา - จ่ายคืนตามมูลค่าออปชันทางทฤษฎี)
+                        val = (prem - opt_values) * mult_qty
                 else:
                     val = 0
                 day_specific_value += val
@@ -680,10 +688,16 @@ if not market_trades.empty:
                     val = (stk - price_range) * mult_qty
                 elif "Call" in p_type:
                     opt_values = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Call") for p in price_range])
-                    val = (opt_values - prem) * mult_qty if "Long" in p_type else (prem - opt_values) * mult_qty
+                    if "Long" in p_type:
+                        val = (opt_values - prem) * mult_qty
+                    else:
+                        val = (prem - opt_values) * mult_qty
                 elif "Put" in p_type:
                     opt_values = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Put") for p in price_range])
-                    val = (opt_values - prem) * mult_qty if "Long" in p_type else (prem - opt_values) * mult_qty
+                    if "Long" in p_type:
+                        val = (opt_values - prem) * mult_qty
+                    else:
+                        val = (prem - opt_values) * mult_qty
                 else:
                     val = 0
                 cumulative_portfolio_value += val
@@ -743,7 +757,6 @@ st.plotly_chart(fig_daily_cumulative, use_container_width=True)
 # --- เพิ่มตารางข้อมูลการเทรดในวันที่เลือกจำลอง (Trade Summary for Selected Date) ---
 st.markdown(f"### 📋 รายการเทรดที่นำมาคำนวณในวันที่เลือก (`{sim_date_str}` และสะสมก่อนหน้า)")
 if not market_trades.empty:
-    # กรองเฉพาะสัญญาที่มี TradeDate <= sim_date_str
     filtered_sim_trades = market_trades[market_trades["TradeDate"].astype(str) <= sim_date_str]
     if not filtered_sim_trades.empty:
         display_cols = ["ID", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "TradeDate", "ExpiryDate"]

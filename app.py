@@ -14,10 +14,8 @@ BANGKOK_TZ = timezone(timedelta(hours=7))
 
 # --- ฟังก์ชันจัดการไฟล์พอร์ตหลายพอร์ต ---
 def get_available_portfolios():
-    # ค้นหาไฟล์ csv ทั้งหมดในโฟลเดอร์ปัจจุบันที่ขึ้นต้นด้วย portfolio_ หรือใช้ไฟล์หลัก
     files = [f for f in os.listdir('.') if f.startswith('portfolio_') and f.endswith('.csv')]
     if not files:
-        # ถ้ายังไม่มี ให้สร้างไฟล์เริ่มต้นขึ้นมา 3 พอร์ต
         default_files = ["portfolio_1.csv", "portfolio_2.csv", "portfolio_3.csv"]
         for df_file in default_files:
             if not os.path.exists(df_file):
@@ -136,16 +134,14 @@ def bs_greeks(S, K, T, r, sigma, option_type):
 
 # --- UI หลัก ---
 st.title("📈 TFEX Multi-Asset Options & Futures Pro Dashboard")
-st.markdown("ระบบวิเคราะห์ Payoff Chart รองรับ Gross Position, Multi-Portfolio Management และ Strike Dropdown ตามรูปแบบสเตปตลาด")
+st.markdown("ระบบวิเคราะห์ Payoff Chart รองรับ Gross Position, Multi-Portfolio Management, Dropdown ซีรีส์ และ Strike ตามรูปแบบสเตปตลาด")
 
 # --- แถบ Sidebar จัดการพอร์ตและตลาด ---
 st.sidebar.header("📁 จัดการพอร์ตเทรด (Portfolio Management)")
 available_portfolios = get_available_portfolios()
 
-# เลือกพอร์ตหลักสำหรับบันทึกรายการเพิ่ม
 active_portfolio = st.sidebar.selectbox("เลือกพอร์ตหลักเพื่อบันทึกเทรด", available_portfolios)
 
-# ฟังก์ชันสร้างพอร์ตใหม่
 new_port_name = st.sidebar.text_input("ชื่อพอร์ตใหม่ (เช่น portfolio_4.csv)")
 if st.sidebar.button("➕ สร้างพอร์ตใหม่"):
     if new_port_name:
@@ -189,7 +185,6 @@ volatility_input = st.sidebar.slider(
 risk_free_rate = 0.025
 contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
-# โหลดข้อมูลจากพอร์ตหลักที่กำลังเลือกอยู่
 trades_df = load_trades_from_file(active_portfolio)
 
 # --- สร้างรายการ Strike แบบ Dropdown ตามสเตปตัวเลขกลมๆ และฟอร์แมตทศนิยมตามตลาด ---
@@ -202,12 +197,33 @@ else:
     step = 10.0
     base_strikes = [int(round(base_center + i * step)) for i in range(-20, 21)]
 
+# --- สร้างรายการตัวเลือก Series อัตโนมัติ (Dropdown สำหรับซีรีส์) ---
+current_year = date.today().year
+short_year = str(current_year)[-2:]
+next_short_year = str(current_year + 1)[-2:]
+
+prefix_code = "USD" if selected_market == "TFEX USD/THB" else "S50"
+# รหัสเดือน TFEX (H=มี.ค., M=มิ.ย., U=ก.ย., Z=ธ.ค. และรหัสเดือนรายเดือนอื่นๆ)
+month_codes = ["H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]
+
+generated_series_options = []
+for yr in [short_year, next_short_year]:
+    for m in month_codes:
+        generated_series_options.append(f"{prefix_code}{m}{yr}")
+
 # --- ฟอร์มเพิ่ม / แก้ไขรายการเทรดลงในพอร์ตหลัก ---
 st.sidebar.subheader(f"➕ เพิ่มสถานะการเทรด (ลงในพอร์ต: {active_portfolio})")
 with st.sidebar.form("trade_form"):
     strategy_name = st.text_input("ชื่อกลยุทธ์ / Note", "Strategy #1")
-    default_series = "USDU26" if selected_market == "TFEX USD/THB" else "S50U26"
-    series_name = st.text_input("ซีรีส์ TFEX", default_series)
+    
+    # 📌 ปรับปรุงให้ Series เป็น Dropdown พร้อมรองรับพิมพ์เพิ่มเอง
+    series_mode = st.radio("เลือกรูปแบบซีรีส์ (Series)", ["เลือกจาก Dropdown มาตรฐาน", "พิมพ์ระบุเอง"])
+    if series_mode == "เลือกจาก Dropdown มาตรฐาน":
+        default_series_idx = 6 if "U" + short_year in generated_series_options else 0
+        series_name = st.sidebar.selectbox("เลือกซีรีส์ TFEX", options=generated_series_options, index=default_series_idx) if "sidebar" in locals() else st.selectbox("เลือกซีรีส์ TFEX", options=generated_series_options, index=default_series_idx)
+    else:
+        default_custom = f"{prefix_code}U{short_year}"
+        series_name = st.text_input("พิมพ์รหัสซีรีส์เอง", value=default_custom)
     
     position_status = st.selectbox("สถานะคำสั่ง (Status)", ["Open", "Close"])
     position_type = st.selectbox("ประเภทสัญญา", [
@@ -296,7 +312,6 @@ selected_portfolios_for_merge = st.multiselect(
     default=[active_portfolio]
 )
 
-# รวมข้อมูล DataFrame จากทุกพอร์ตที่ถูกเลือก
 combined_trades_df = pd.DataFrame()
 if selected_portfolios_for_merge:
     dfs = []
@@ -308,13 +323,12 @@ if selected_portfolios_for_merge:
     if dfs:
         combined_trades_df = pd.concat(dfs, ignore_index=True)
 
-# กรองข้อมูลเฉพาะตลาดที่เลือก
 market_trades = pd.DataFrame()
 if not combined_trades_df.empty and "Market" in combined_trades_df.columns:
     market_trades = combined_trades_df[combined_trades_df["Market"] == selected_market]
 
 # ==========================================
-# ตารางสรุปสถานะ Open/Close และกำไรขาดทุนเทียบกับราคาอ้างอิง (ของพอร์ตที่รวมกัน)
+# ตารางสรุปสถานะ Open/Close และกำไรขาดทุนเทียบกับราคาอ้างอิง
 # ==========================================
 st.subheader("📊 ตารางสรุปสัญญาและกำไร/ขาดทุน (จากพอร์ตที่เลือกมารวมกัน)")
 if not market_trades.empty:

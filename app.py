@@ -421,7 +421,7 @@ else:
     st.info("ไม่มีข้อมูลสัญญาในตลาดนี้")
 
 # ==========================================
-# กราฟที่ 1: Payoff ณ วันหมดอายุ (พร้อม Spot ป้ายด้านบน และจุดคุ้มทุน BEP)
+# กราฟที่ 1: Payoff ณ วันหมดอายุ (พร้อม Spot Price ด้านบน และจุดคุ้มทุน)
 # ==========================================
 st.subheader(f"📈 1. Payoff รวม ณ วันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วยแสดงผล", ["บาทรวม (THB)", "จุด (Points)"])
@@ -489,7 +489,7 @@ if not market_trades.empty:
             hovertemplate=f"<b>{row['Strategy']}</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
         ))
 
-# เพิ่มกราฟ Net Payoff (กำไรฟ้าอ่อน)
+# เพิ่มกราฟ Net Payoff พร้อมแยกสีพื้นที่ใต้กราฟ (กำไร = ฟ้าอ่อน, ขาดทุน = แดงอ่อน)
 fig.add_trace(go.Scatter(
     x=price_range, y=total_payoff,
     mode='lines',
@@ -500,7 +500,7 @@ fig.add_trace(go.Scatter(
     hovertemplate="<b>Net Portfolio</b><br>Price: %{x:.2f}<br>Total P&L: %{y:,.2f}<extra></extra>"
 ))
 
-# สร้างโซนสีแดงใต้เส้น 0 (ขาดทุน)
+# โซนสีแดงใต้เส้น 0 (ขาดทุน)
 fig.add_trace(go.Scatter(
     x=price_range,
     y=np.where(total_payoff < 0, total_payoff, 0),
@@ -512,43 +512,42 @@ fig.add_trace(go.Scatter(
     hoverinfo='skip'
 ))
 
-# --- คำนวณหาจุดคุ้มทุน (Break-even Points - BEP) ---
-sign_changes = np.where(np.diff(np.signbit(total_payoff)))[0]
-bep_prices = []
-for idx_sc in sign_changes:
-    x1, x2 = price_range[idx_sc], price_range[idx_sc + 1]
-    y1, y2 = total_payoff[idx_sc], total_payoff[idx_sc + 1]
-    if y2 - y1 != 0:
-        bep = x1 - y1 * (x2 - x1) / (y2 - y1)
-        bep_prices.append(bep)
+# คำนวณหาจุดคุ้มทุน (Break-even points)
+be_points = []
+for j in range(len(price_range) - 1):
+    if total_payoff[j] * total_payoff[j+1] < 0:
+        x1, x2 = price_range[j], price_range[j+1]
+        y1, y2 = total_payoff[j], total_payoff[j+1]
+        if y2 - y1 != 0:
+            x_be = x1 - y1 * (x2 - x1) / (y2 - y1)
+            be_points.append(x_be)
 
-if bep_prices:
+if be_points:
+    be_y = [0] * len(be_points)
     fig.add_trace(go.Scatter(
-        x=bep_prices,
-        y=[0] * len(bep_prices),
+        x=be_points,
+        y=be_y,
         mode='markers+text',
-        name='Break-even (BEP)',
+        name='Break-even (จุดคุ้มทุน)',
         marker=dict(color='orange', size=10, symbol='diamond'),
-        text=[f"BEP: {bep:.2f}" for bep in bep_prices],
+        text=[f"BE: {bp:.2f}" for bp in be_points],
         textposition="top center",
-        hoverinfo='text'
+        hovertemplate="<b>Break-even</b><br>Price: %{x:.2f}<extra></extra>"
     ))
 
 fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 fig.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
 
-# เพิ่ม Annotations แสดงราคาอ้างอิงไว้ที่ด้านบนสุดของเส้น Spot (ไม่ทับตัวกราฟหลัก)
+# แสดงราคาอ้างอิง (Spot Price) ไว้ที่ด้านบนสุดของเส้นแนวตั้ง (ไม่ทับกราฟ Payoff)
 fig.add_annotation(
     x=spot_price,
     y=1.0,
     yref="paper",
-    text=f"Spot: {spot_price:,.2f}",
+    text=f"{spot_price:,.2f}",
     showarrow=False,
     font=dict(color="red", size=12, family="sans-serif"),
-    bgcolor="rgba(255, 255, 255, 0.8)",
-    bordercolor="red",
-    borderwidth=1,
-    borderpad=4
+    xanchor="center",
+    yanchor="bottom"
 )
 
 fig.update_layout(
@@ -564,7 +563,7 @@ fig.update_layout(
 st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
-# กราฟที่ 2 & 3: จำลองรายวัน (พร้อม Spot ป้ายด้านบน) และแสดง Greeks
+# กราฟที่ 2 & 3: จำลองรายวัน และแสดง Greeks
 # ==========================================
 st.subheader("⏱️ 2. จำลองกราฟ Payoff รายวัน (Time Decay Simulation)")
 sim_date = st.date_input("เลือกวันที่ต้องการจำลองสถานะ", value=date.today())
@@ -581,7 +580,7 @@ if not market_trades.empty:
         unique_trade_dates.append(sim_date_str)
         unique_trade_dates = sorted(unique_trade_dates)
 
-    # กราฟที่ 2.1: เฉพาะสัญญาที่เทรดในวันนั้นๆ (Single Day Trades Only)
+    # กราฟที่ 2.1: เฉพาะสัญญาที่เทรดในวันนั้นๆ
     for i, t_date_str in enumerate(unique_trade_dates):
         try:
             t_d = datetime.strptime(t_date_str, "%Y-%m-%d").date()
@@ -647,7 +646,7 @@ if not market_trades.empty:
                     hoverinfo='skip'
                 ))
 
-    # กราฟที่ 2.2: แบบสะสมยอดรวมถึงวันที่เลือก (Cumulative Portfolio Value up to Date)
+    # กราฟที่ 2.2: แบบสะสมยอดรวมถึงวันที่เลือก
     for i, t_date_str in enumerate(unique_trade_dates):
         if t_date_str > sim_date_str:
             continue
@@ -712,12 +711,11 @@ if not market_trades.empty:
                 hoverinfo='skip'
             ))
 
-# เพิ่มเส้นอ้างอิงและป้าย Spot ด้านบนให้กับกราฟจำลองรายวันทั้งสอง
 fig_daily_single.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 fig_daily_single.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
 fig_daily_single.add_annotation(
-    x=spot_price, y=1.0, yref="paper", text=f"Spot: {spot_price:,.2f}",
-    showarrow=False, font=dict(color="red", size=12), bgcolor="rgba(255, 255, 255, 0.8)", bordercolor="red", borderwidth=1, borderpad=4
+    x=spot_price, y=1.0, yref="paper", text=f"{spot_price:,.2f}",
+    showarrow=False, font=dict(color="red", size=12), xanchor="center", yanchor="bottom"
 )
 fig_daily_single.update_layout(
     title="กราฟเฉพาะวันที่เทรด (Trades on Specific Date)",
@@ -729,8 +727,8 @@ fig_daily_single.update_layout(
 fig_daily_cumulative.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 fig_daily_cumulative.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
 fig_daily_cumulative.add_annotation(
-    x=spot_price, y=1.0, yref="paper", text=f"Spot: {spot_price:,.2f}",
-    showarrow=False, font=dict(color="red", size=12), bgcolor="rgba(255, 255, 255, 0.8)", bordercolor="red", borderwidth=1, borderpad=4
+    x=spot_price, y=1.0, yref="paper", text=f"{spot_price:,.2f}",
+    showarrow=False, font=dict(color="red", size=12), xanchor="center", yanchor="bottom"
 )
 fig_daily_cumulative.update_layout(
     title="กราฟสะสมยอดรวมถึงวันที่เลือก (Cumulative Portfolio Value)",

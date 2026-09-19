@@ -285,9 +285,16 @@ with st.sidebar.form("trade_form"):
 # ส่วนจัดการตาราง: แก้ไขข้อมูล หรือ เลือกแถวเพื่อลบพร้อมระบบยืนยัน
 # ==========================================
 st.subheader(f"📋 รายการเทรดในพอร์ตหลักปัจจุบัน: `{active_portfolio}`")
+
+# สร้างตัวแปรเก็บข้อมูลใช้งานร่วมกันหลังผ่าน data_editor
+active_df_to_use = trades_df.copy()
+
 if not trades_df.empty:
     st.markdown("💡 *คุณสามารถแก้ไขข้อมูลโดยตรงในตารางด้านล่างนี้ได้เลย หรือใช้ปุ่มบันทึกการแก้ไขด้านล่าง*")
     edited_df = st.data_editor(trades_df, num_rows="dynamic", use_container_width=True, key="trade_editor")
+    
+    # อัปเดตข้อมูลใช้งานเป็นตารางที่ถูกแก้ไขทันที (เพื่อให้กราฟและผลลัพธ์ตอบสนองทันทีโดยไม่ต้องกดปุ่ม Save ก่อน)
+    active_df_to_use = edited_df
     
     col_btn1, col_btn2 = st.columns([1, 4])
     with col_btn1:
@@ -322,8 +329,6 @@ if not trades_df.empty:
         empty_df = pd.DataFrame(columns=["ID", "Market", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot"])
         save_trades_to_file(empty_df, active_portfolio)
         st.rerun()
-        
-    trades_df = edited_df
 else:
     st.info(f"พอร์ต `{active_portfolio}` ยังไม่มีข้อมูล กรุณาเพิ่มสัญญาจากเมนูด้านซ้าย")
 
@@ -342,7 +347,12 @@ combined_trades_df = pd.DataFrame()
 if selected_portfolios_for_merge:
     dfs = []
     for p_file in selected_portfolios_for_merge:
-        p_df = load_trades_from_file(p_file)
+        # หากพอร์ตปัจจุบันคือพอร์ตที่ถูกเลือกใน multiselect และมีการแก้ไขในหน้าจอ ให้ใช้ข้อมูลจาก active_df_to_use สดๆ ทันที
+        if p_file == active_portfolio:
+            p_df = active_df_to_use.copy()
+        else:
+            p_df = load_trades_from_file(p_file)
+            
         if not p_df.empty:
             p_df['Source_Portfolio'] = p_file
             dfs.append(p_df)

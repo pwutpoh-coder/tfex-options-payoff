@@ -133,7 +133,7 @@ selected_market = st.sidebar.selectbox("เลือกตลาด TFEX", ["TFE
 
 current_spot, auto_volatility, last_update_time = get_market_data(selected_market)
 
-# --- เพิ่มแถบแสดงข้อมูลราคาอ้างอิงสดๆ ฝั่งขวาของหน้าจอหลัก ---
+# --- แถบแสดงข้อมูลราคาอ้างอิงสดๆ ฝั่งขวาของหน้าจอหลัก ---
 col_head1, col_head2, col_head3 = st.columns([1, 2, 4])
 with col_head1:
     if st.button("🔄 รีเฟรชตลาด"):
@@ -158,13 +158,17 @@ contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
 trades_df = load_trades()
 
-# --- สร้างรายการ Strike แบบ Dropdown ตามกฎที่ขอ ---
+# --- สร้างรายการ Strike แบบ Dropdown ตามสเตปตัวเลขกลมๆ ที่ผู้ใช้ต้องการ ---
 if selected_market == "TFEX USD/THB":
+    # ปัดราคา Spot ปัจจุบันให้ลงท้ายด้วย .00 หรือ .25 ที่ใกล้ที่สุด เพื่อเป็นศูนย์กลาง
+    base_center = round(spot_price * 4) / 4.0
     step = 0.25
-    base_strikes = [round(spot_price + i * step, 2) for i in range(-20, 21)]
+    base_strikes = [round(base_center + i * step, 2) for i in range(-25, 26)]
 else:
+    # ปัดราคา Spot ปัจจุบันให้เป็นหลัก 10 ที่ใกล้ที่สุด (เช่น 950, 960)
+    base_center = round(spot_price / 10.0) * 10.0
     step = 10.0
-    base_strikes = [round(spot_price + i * step, 2) for i in range(-15, 16)]
+    base_strikes = [round(base_center + i * step, 2) for i in range(-20, 21)]
 
 # --- ฟอร์มเพิ่ม / แก้ไขรายการเทรด ---
 st.sidebar.subheader("➕ เพิ่มสถานะการเทรด (Gross Position)")
@@ -182,7 +186,9 @@ with st.sidebar.form("trade_form"):
     
     strike_mode = st.radio("เลือกรูปแบบราคาใช้สิทธิ (Strike)", ["เลือกจาก Dropdown (สเตปอัตโนมัติ)", "พิมพ์ระบุเอง"])
     if strike_mode == "เลือกจาก Dropdown (สเตปอัตโนมัติ)":
-        strike = st.selectbox("ราคาใช้สิทธิ (Strike)", options=base_strikes, index=len(base_strikes)//2)
+        # หา index ที่ใกล้เคียงกับราคาฐานปัจจุบันที่สุดมาเป็นค่าเริ่มต้นใน Dropdown
+        closest_index = min(range(len(base_strikes)), key=lambda i: abs(base_strikes[i] - spot_price))
+        strike = st.selectbox("ราคาใช้สิทธิ (Strike)", options=base_strikes, index=closest_index)
     else:
         strike = st.number_input("ระบุราคาใช้สิทธิเอง", value=float(round(spot_price, 2)), format="%.2f")
 

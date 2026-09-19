@@ -580,7 +580,7 @@ if not market_trades.empty:
         unique_trade_dates.append(sim_date_str)
         unique_trade_dates = sorted(unique_trade_dates)
 
-    # กราฟที่ 2.1: เฉพาะสัญญาที่เทรดในวันนั้นๆ (รวมทุกสัญญาที่เปิดในวันเดียวกันอย่างถูกต้อง)
+    # กราฟที่ 2.1: เฉพาะสัญญาที่เทรดในวันนั้นๆ
     for i, t_date_str in enumerate(unique_trade_dates):
         try:
             t_d = datetime.strptime(t_date_str, "%Y-%m-%d").date()
@@ -646,7 +646,7 @@ if not market_trades.empty:
                     hoverinfo='skip'
                 ))
 
-    # กราฟที่ 2.2: แบบสะสมยอดรวมถึงวันที่เลือก (รวมพอร์ตทั้งหมดที่สะสมมาถึงวันนั้นๆ อย่างถูกต้อง)
+    # กราฟที่ 2.2: แบบสะสมยอดรวมถึงวันที่เลือก
     for i, t_date_str in enumerate(unique_trade_dates):
         if t_date_str > sim_date_str:
             continue
@@ -739,6 +739,19 @@ fig_daily_cumulative.update_layout(
 
 st.plotly_chart(fig_daily_single, use_container_width=True)
 st.plotly_chart(fig_daily_cumulative, use_container_width=True)
+
+# --- เพิ่มตารางข้อมูลการเทรดในวันที่เลือกจำลอง (Trade Summary for Selected Date) ---
+st.markdown(f"### 📋 รายการเทรดที่นำมาคำนวณในวันที่เลือก (`{sim_date_str}` และสะสมก่อนหน้า)")
+if not market_trades.empty:
+    # กรองเฉพาะสัญญาที่มี TradeDate <= sim_date_str
+    filtered_sim_trades = market_trades[market_trades["TradeDate"].astype(str) <= sim_date_str]
+    if not filtered_sim_trades.empty:
+        display_cols = ["ID", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "TradeDate", "ExpiryDate"]
+        st.dataframe(filtered_sim_trades[display_cols], use_container_width=True)
+    else:
+        st.info(f"ไม่มีรายการเทรดในหรือก่อนวันที่ {sim_date_str}")
+else:
+    st.info("ไม่มีข้อมูลการเทรดในพอร์ต")
 
 # ==========================================
 # สรุปค่า Greeks รวมพอร์ต

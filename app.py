@@ -489,7 +489,7 @@ if not market_trades.empty:
             hovertemplate=f"<b>{row['Strategy']}</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
         ))
 
-# เพิ่มกราฟ Net Payoff พร้อมแยกสีพื้นที่ใต้กราฟ (กำไร = ฟ้าอ่อน, ขาดทุน = แดงอ่อน)
+# เพิ่มกราฟ Net Payoff พร้อมแยกสีพื้นที่ใต้กราฟ
 fig.add_trace(go.Scatter(
     x=price_range, y=total_payoff,
     mode='lines',
@@ -538,7 +538,6 @@ if be_points:
 fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 fig.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
 
-# แสดงราคาอ้างอิง (Spot Price) ไว้ที่ด้านบนสุดของเส้นแนวตั้ง (ไม่ทับกราฟ Payoff)
 fig.add_annotation(
     x=spot_price,
     y=1.0,
@@ -580,7 +579,7 @@ if not market_trades.empty:
         unique_trade_dates.append(sim_date_str)
         unique_trade_dates = sorted(unique_trade_dates)
 
-    # กราฟที่ 2.1: เฉพาะสัญญาที่เทรดในวันนั้นๆ
+    # กราฟที่ 2.1: เฉพาะสัญญาที่เทรดในวันนั้นๆ (รวมทุกขาสัญญาในวันนั้น)
     for i, t_date_str in enumerate(unique_trade_dates):
         try:
             t_d = datetime.strptime(t_date_str, "%Y-%m-%d").date()
@@ -590,9 +589,11 @@ if not market_trades.empty:
         day_specific_value = np.zeros_like(price_range)
         has_trade_on_day = False
         
-        for idx, row in market_trades.iterrows():
-            if str(row["TradeDate"]) == t_date_str:
-                has_trade_on_day = True
+        # กรองทุกขาของสัญญาที่เทรดในวัน t_date_str (ไม่แยกทีละแถว เพื่อให้กลยุทธ์ Strangle/Spread มาครบทุกขาพร้อมกัน)
+        day_trades = market_trades[market_trades["TradeDate"].astype(str) == t_date_str]
+        if not day_trades.empty:
+            has_trade_on_day = True
+            for idx, row in day_trades.iterrows():
                 p_type = row["Type"]
                 stk = float(row["Strike"])
                 prem = float(row["Premium"])
@@ -617,14 +618,12 @@ if not market_trades.empty:
                     if "Long" in p_type:
                         val = (opt_values - prem) * mult_qty
                     else:
-                        # แก้ไขการคำนวณ Short Call ให้ถูกต้อง (รับพรีเมี่ยมมา - จ่ายคืนตามมูลค่าออปชันทางทฤษฎี)
                         val = (prem - opt_values) * mult_qty
                 elif "Put" in p_type:
                     opt_values = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Put") for p in price_range])
                     if "Long" in p_type:
                         val = (opt_values - prem) * mult_qty
                     else:
-                        # แก้ไขการคำนวณ Short Put ให้ถูกต้อง (รับพรีเมี่ยมมา - จ่ายคืนตามมูลค่าออปชันทางทฤษฎี)
                         val = (prem - opt_values) * mult_qty
                 else:
                     val = 0
@@ -654,7 +653,7 @@ if not market_trades.empty:
                     hoverinfo='skip'
                 ))
 
-    # กราฟที่ 2.2: แบบสะสมยอดรวมถึงวันที่เลือก
+    # กราฟที่ 2.2: แบบสะสมยอดรวมถึงวันที่เลือก (รวบรวมสัญญาที่ TradeDate <= t_date_str ทั้งหมด)
     for i, t_date_str in enumerate(unique_trade_dates):
         if t_date_str > sim_date_str:
             continue
@@ -664,9 +663,10 @@ if not market_trades.empty:
             t_d = date.today()
             
         cumulative_portfolio_value = np.zeros_like(price_range)
+        cum_trades = market_trades[market_trades["TradeDate"].astype(str) <= t_date_str]
         
-        for idx, row in market_trades.iterrows():
-            if str(row["TradeDate"]) <= t_date_str:
+        if not cum_trades.empty:
+            for idx, row in cum_trades.iterrows():
                 p_type = row["Type"]
                 stk = float(row["Strike"])
                 prem = float(row["Premium"])

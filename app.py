@@ -7,9 +7,9 @@ import os
 from datetime import datetime, date, timezone, timedelta
 from scipy.stats import norm
 
-st.set_page_config(page_title="TFEX Multi-Asset Payoff & Greeks Dashboard", layout="wide")
+st.set_page_config(page_title="TFEX Multi-Asset Payoff & Greeks Dashboard Pro", layout="wide")
 
-TRADE_FILE = "trades_multi_asset.csv"
+TRADE_FILE = "trades_multi_asset_pro.csv"
 
 # กำหนดโซนเวลา Bangkok (UTC+7)
 BANGKOK_TZ = timezone(timedelta(hours=7))
@@ -18,12 +18,21 @@ BANGKOK_TZ = timezone(timedelta(hours=7))
 def load_trades():
     if os.path.exists(TRADE_FILE):
         df = pd.read_csv(TRADE_FILE)
-        expected_cols = ["ID", "Market", "Strategy", "Series", "Type", "Strike", "Premium", "Contracts", "Commission", "ExpiryDate"]
+        expected_cols = ["ID", "Market", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot"]
         for col in expected_cols:
             if col not in df.columns:
-                df[col] = 0 if col != "Strategy" and col != "Series" and col != "Type" and col != "ExpiryDate" and col != "Market" else "N/A"
+                if col == "Status":
+                    df[col] = "Open"
+                elif col == "TradeDate":
+                    df[col] = str(date.today())
+                elif col == "EntrySpot":
+                    df[col] = 0.0
+                elif col in ["Strike", "Premium", "Contracts", "Commission", "ID"]:
+                    df[col] = 0
+                else:
+                    df[col] = "N/A"
         return df
-    return pd.DataFrame(columns=["ID", "Market", "Strategy", "Series", "Type", "Strike", "Premium", "Contracts", "Commission", "ExpiryDate"])
+    return pd.DataFrame(columns=["ID", "Market", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot"])
 
 def save_trades(df):
     df.to_csv(TRADE_FILE, index=False)
@@ -71,7 +80,7 @@ def get_market_data(market_type):
         update_time = datetime.now(BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S (ICT / UTC+7)")
         return default_p, default_v, update_time
 
-# --- ฟังก์ชัน Black-Scholes สำหรับ Option Pricing (ใช้วาดกราฟรายวัน) ---
+# --- ฟังก์ชัน Black-Scholes สำหรับ Option Pricing ---
 def bs_option_price(S, K, T, r, sigma, option_type):
     if T <= 0:
         if option_type == "Call":
@@ -116,16 +125,15 @@ def bs_greeks(S, K, T, r, sigma, option_type):
 
 # --- UI หลัก ---
 st.title("📈 TFEX Multi-Asset Options & Futures Pro Dashboard")
-st.markdown("ระบบวิเคราะห์ Payoff Chart (USD/THB และ SET50), Interactive Hover, Greeks, และการจำลอง Payoff รายวัน")
+st.markdown("ระบบวิเคราะห์ Payoff Chart รองรับ Gross Position (Open/Close), Time Decay รายวันตามวันที่บันทึก และ Strike Dropdown อัตโนมัติ")
 
 # เลือกตลาดหลักใน Sidebar
 st.sidebar.header("⚙️ เลือกตลาดและตั้งค่า")
 selected_market = st.sidebar.selectbox("เลือกตลาด TFEX", ["TFEX USD/THB", "TFEX SET50"])
 
-# ดึงราคาและ Volatility อัตโนมัติจากตลาดที่เลือก
 current_spot, auto_volatility, last_update_time = get_market_data(selected_market)
 
-col_r1, col_r2, col_r3 = st.columns([2, 4, 2])
+col_r1, col_r2 = st.columns([2, 6])
 with col_r1:
     if st.button("🔄 รีเฟรชข้อมูลตลาดทันที"):
         st.cache_data.clear()
@@ -146,25 +154,44 @@ contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
 trades_df = load_trades()
 
+# --- สร้างรายการ Strike แบบ Dropdown ตามกฎที่ขอ ---
+if selected_market == "TFEX USD/THB":
+    step = 0.25
+    base_strikes = [round(spot_price + i * step, 2) for i in range(-20, 21)]
+else:
+    step = 10.0
+    base_strikes = [round(spot_price + i * step, 2) for i in range(-15, 16)]
+
 # --- ฟอร์มเพิ่ม / แก้ไขรายการเทรด ---
-st.sidebar.subheader("➕ เพิ่ม / จัดการสถานะการเทรด")
+st.sidebar.subheader("➕ เพิ่มสถานะการเทรด (Gross Position)")
 with st.sidebar.form("trade_form"):
     strategy_name = st.text_input("ชื่อกลยุทธ์ / Note", "Strategy #1")
     default_series = "USDU26" if selected_market == "TFEX USD/THB" else "S50U26"
     series_name = st.text_input("ซีรีส์ TFEX", default_series)
+    
+    position_status = st.selectbox("สถานะคำสั่ง (Status)", ["Open", "Close"])
     position_type = st.selectbox("ประเภทสัญญา", [
         "Long Futures", "Short Futures", 
         "Long Call Option", "Short Call Option", 
         "Long Put Option", "Short Put Option"
     ])
-    default_strike = round(spot_price, 2)
-    strike = st.number_input("ราคาใช้สิทธิ (Strike / Entry)", value=float(default_strike), format="%.2f")
+    
+    strike_mode = st.radio("เลือกรูปแบบราคาใช้สิทธิ (Strike)", ["เลือกจาก Dropdown (สเตปอัตโนมัติ)", "พิมพ์ระบุเอง"])
+    if strike_mode == "เลือกจาก Dropdown (สเตปอัตโนมัติ)":
+        strike = st.selectbox("ราคาใช้สิทธิ (Strike)", options=base_strikes, index=len(base_strikes)//2)
+    else:
+        strike = st.number_input("ระบุราคาใช้สิทธิเอง", value=float(round(spot_price, 2)), format="%.2f")
+
     default_prem = 0.25 if selected_market == "TFEX USD/THB" else 15.0
     premium = st.number_input("ราคาพรีเมี่ยม / ต้นทุนต่อหน่วย", value=float(default_prem), format="%.2f")
     contracts = st.number_input("จำนวนสัญญา (Contracts)", value=1, min_value=1, step=1)
+    
     default_comm = 30.0 if selected_market == "TFEX USD/THB" else 60.0
     commission = st.number_input("ค่าคอมมิชชั่นรวมต่อสัญญา (บาท)", value=float(default_comm), format="%.2f")
-    expiry_date = st.date_input("วันหมดอายุสัญญา (Expiry Date)", value=date.today())
+    
+    # ระบบเลือกวันที่บันทึก (ค่าเริ่มต้นคือวันนี้ แต่เลือกย้อนหลังหรือล่วงหน้าได้)
+    trade_date = st.date_input("วันที่บันทึกรายการ (Trade Date)", value=date.today())
+    expiry_date = st.date_input("วันหมดอายุสัญญา (Expiry Date)", value=date.today() + timedelta(days=30))
     
     submitted = st.form_submit_button("บันทึกเพิ่มเข้าพอร์ต")
     if submitted:
@@ -175,11 +202,14 @@ with st.sidebar.form("trade_form"):
             "Strategy": strategy_name,
             "Series": series_name,
             "Type": position_type,
+            "Status": position_status,
             "Strike": strike,
             "Premium": premium,
             "Contracts": contracts,
             "Commission": commission,
-            "ExpiryDate": str(expiry_date)
+            "TradeDate": str(trade_date),
+            "ExpiryDate": str(expiry_date),
+            "EntrySpot": spot_price
         }])
         trades_df = pd.concat([trades_df, new_row], ignore_index=True)
         save_trades(trades_df)
@@ -187,7 +217,7 @@ with st.sidebar.form("trade_form"):
         st.rerun()
 
 # --- แสดงตารางจัดการข้อมูลพอร์ต (แก้ไข / ลบได้) ---
-st.subheader("📋 รายการเทรดในพอร์ตทั้งหมด (ทุกตลาด)")
+st.subheader("📋 รายการเทรดในพอร์ตทั้งหมด (รองรับ Gross Position & ราคาอ้างอิงตอนเข้า)")
 if not trades_df.empty:
     edited_df = st.data_editor(trades_df, num_rows="dynamic", use_container_width=True, key="trade_editor")
     
@@ -212,9 +242,69 @@ if not trades_df.empty and "Market" in trades_df.columns:
     market_trades = trades_df[trades_df["Market"] == selected_market]
 
 # ==========================================
-# กราฟที่ 1: Payoff ณ วันหมดอายุ (Expiry Payoff)
+# ตารางสรุปสถานะ Open/Close และกำไรขาดทุนเทียบกับราคาอ้างอิง
 # ==========================================
-st.subheader(f"📊 1. วิเคราะห์ Payoff ณ วันหมดอายุ ({selected_market})")
+st.subheader("📊 ตารางสรุปจำนวนสัญญา (Open vs Close) และผลกำไร/ขาดทุนปัจจุบัน")
+if not market_trades.empty:
+    summary_list = []
+    # จัดกลุ่มตาม Series, Strike, Type เพื่อสรุปสถิติ
+    grouped = market_trades.groupby(["Series", "Strike", "Type"])
+    for key, group in grouped:
+        ser, stk, p_type = key
+        open_qty = group[group["Status"] == "Open"]["Contracts"].sum()
+        close_qty = group[group["Status"] == "Close"]["Contracts"].sum()
+        net_qty = open_qty - close_qty
+        
+        # คำนวณ P&L ปัจจุบันเทียบกับราคา Spot ปัจจุบัน
+        item_pnl = 0
+        mult_qty = contract_multiplier
+        for _, r_row in group.iterrows():
+            r_stk = float(r_row["Strike"])
+            r_prem = float(r_row["Premium"])
+            r_qty = int(r_row["Contracts"])
+            r_comm = float(r_row["Commission"]) * r_qty
+            r_stat = r_row["Status"]
+            
+            # ทิศทางสัญญากลับด้านหากเป็น Close
+            dir_factor = 1 if r_stat == "Open" else -1
+            
+            if r_row["Type"] == "Long Futures":
+                item_pnl += (spot_price - r_stk) * r_qty * mult_qty * dir_factor - r_comm
+            elif r_row["Type"] == "Short Futures":
+                item_pnl += (r_stk - spot_price) * r_qty * mult_qty * dir_factor - r_comm
+            elif "Call" in r_row["Type"]:
+                curr_opt_val = bs_option_price(spot_price, r_stk, 30/365.0, risk_free_rate, volatility_input, "Call")
+                if "Long" in r_row["Type"]:
+                    item_pnl += (curr_opt_val - r_prem) * r_qty * mult_qty * dir_factor - r_comm
+                else:
+                    item_pnl += (r_prem - curr_opt_val) * r_qty * mult_qty * dir_factor - r_comm
+            elif "Put" in r_row["Type"]:
+                curr_opt_val = bs_option_price(spot_price, r_stk, 30/365.0, risk_free_rate, volatility_input, "Put")
+                if "Long" in r_row["Type"]:
+                    item_pnl += (curr_opt_val - r_prem) * r_qty * mult_qty * dir_factor - r_comm
+                else:
+                    item_pnl += (r_prem - curr_opt_val) * r_qty * mult_qty * dir_factor - r_comm
+
+        summary_list.append({
+            "Series": ser,
+            "Strike": stk,
+            "Type": p_type,
+            "Open Contracts": open_qty,
+            "Close Contracts": close_qty,
+            "Net Outstanding": net_qty,
+            "Current P&L (THB)": round(item_pnl, 2)
+        })
+    
+    summary_df = pd.DataFrame(summary_list)
+    st.dataframe(summary_df, use_container_width=True)
+else:
+    st.info("ยังไม่มีข้อมูลสรุปสำหรับตลาดนี้")
+
+# ==========================================
+# กราฟที่ 1: Payoff ณ วันหมดอายุ (Expiry Payoff)
+# คำนึงถึงสถานะ Open (+1) และ Close (-1)
+# ==========================================
+st.subheader(f"📈 1. วิเคราะห์ Payoff ณ วันหมดอายุ ({selected_market})")
 
 c_opt1, c_opt2, c_opt3, c_opt4 = st.columns(4)
 with c_opt1:
@@ -239,7 +329,11 @@ if not market_trades.empty:
         stk = float(row["Strike"])
         prem = float(row["Premium"])
         qty = int(row["Contracts"])
+        status = row["Status"]
         comm_total = float(row["Commission"]) * qty if include_comm else 0.0
+        
+        # ถ้ารสถานะเป็น Close น้ำหนักสัญญาจะเป็นลบเพื่อหักล้างสถานะ Open เดิม
+        sign_multiplier = 1 if status == "Open" else -1
         
         try:
             exp_d = datetime.strptime(str(row["ExpiryDate"]), "%Y-%m-%d").date()
@@ -249,55 +343,58 @@ if not market_trades.empty:
             days_to_expiry = 30
             T = 30 / 365.0
             
-        mult_qty = qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty
+        mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty) * sign_multiplier
         payoff = np.zeros_like(price_range)
         
         if p_type == "Long Futures":
-            payoff = (price_range - stk) * mult_qty - comm_total
+            payoff = (price_range - stk) * mult_qty - (comm_total if status=="Open" else -comm_total)
         elif p_type == "Short Futures":
-            payoff = (stk - price_range) * mult_qty - comm_total
+            payoff = (stk - price_range) * mult_qty - (comm_total if status=="Open" else -comm_total)
         elif p_type == "Long Call Option":
-            payoff = (np.maximum(0, price_range - stk) - prem) * mult_qty - comm_total
+            payoff = (np.maximum(0, price_range - stk) - prem) * mult_qty
         elif p_type == "Short Call Option":
-            payoff = (prem - np.maximum(0, price_range - stk)) * mult_qty - comm_total
+            payoff = (prem - np.maximum(0, price_range - stk)) * mult_qty
         elif p_type == "Long Put Option":
-            payoff = (np.maximum(0, stk - price_range) - prem) * mult_qty - comm_total
+            payoff = (np.maximum(0, stk - price_range) - prem) * mult_qty
         elif p_type == "Short Put Option":
-            payoff = (prem - np.maximum(0, stk - price_range)) * mult_qty - comm_total
+            payoff = (prem - np.maximum(0, stk - price_range)) * mult_qty
             
         total_payoff += payoff
         
-        opt_flag = "Call" if "Call" in p_type else ("Put" if "Put" in p_type else None)
-        if opt_flag:
-            g = bs_greeks(spot_price, stk, T, risk_free_rate, volatility_input, opt_flag)
-            dir_sign = 1 if "Long" in p_type else -1
-            total_greeks["Delta"] += g["Delta"] * qty * contract_multiplier * dir_sign
-            total_greeks["Gamma"] += g["Gamma"] * qty * contract_multiplier * dir_sign
-            total_greeks["Theta"] += g["Theta"] * qty * dir_sign
-            total_greeks["Vega"] += g["Vega"] * qty * contract_multiplier * dir_sign
-        else:
-            dir_sign = 1 if "Long" in p_type else -1
-            total_greeks["Delta"] += 1.0 * qty * contract_multiplier * dir_sign
+        # คำนวณ Greeks เฉพาะสถานะ Open
+        if status == "Open":
+            opt_flag = "Call" if "Call" in p_type else ("Put" if "Put" in p_type else None)
+            if opt_flag:
+                g = bs_greeks(spot_price, stk, T, risk_free_rate, volatility_input, opt_flag)
+                dir_sign = 1 if "Long" in p_type else -1
+                total_greeks["Delta"] += g["Delta"] * qty * contract_multiplier * dir_sign
+                total_greeks["Gamma"] += g["Gamma"] * qty * contract_multiplier * dir_sign
+                total_greeks["Theta"] += g["Theta"] * qty * dir_sign
+                total_greeks["Vega"] += g["Vega"] * qty * contract_multiplier * dir_sign
+            else:
+                dir_sign = 1 if "Long" in p_type else -1
+                total_greeks["Delta"] += 1.0 * qty * contract_multiplier * dir_sign
 
         fig.add_trace(go.Scatter(
             x=price_range, y=payoff,
             mode='lines',
-            name=f"{row['Strategy']} ({row['Series']} {p_type})",
+            name=f"[{status}] {row['Strategy']} ({row['Series']} {p_type})",
             line=dict(dash='dash', width=1.5),
             opacity=0.5,
-            hovertemplate=f"<b>{row['Strategy']} ({p_type})</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
+            hovertemplate=f"<b>[{status}] {row['Strategy']} ({p_type})</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
         ))
 
 fig.add_trace(go.Scatter(
     x=price_range, y=total_payoff,
     mode='lines',
-    name='Total Portfolio Payoff',
+    name='Total Net Portfolio Payoff',
     line=dict(color='blue', width=3),
-    hovertemplate="<b>Total Portfolio</b><br>Price at Expiry: %{x:.2f}<br>Total P&L: %{y:,.2f}<extra></extra>"
+    hovertemplate="<b>Total Net Portfolio</b><br>Price at Expiry: %{x:.2f}<br>Total P&L: %{y:,.2f}<extra></extra>"
 ))
 
 fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 
+# คำนวณกำไรปัจจุบันรวม
 current_portfolio_pnl = 0
 if not market_trades.empty:
     for idx, row in market_trades.iterrows():
@@ -305,21 +402,26 @@ if not market_trades.empty:
         stk = float(row["Strike"])
         prem = float(row["Premium"])
         qty = int(row["Contracts"])
-        comm_total = float(row["Commission"]) * qty if include_comm else 0.0
-        mult_qty = qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty
+        status = row["Status"]
+        sign_multiplier = 1 if status == "Open" else -1
+        mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty) * sign_multiplier
         
         if p_type == "Long Futures":
-            current_portfolio_pnl += (spot_price - stk) * mult_qty - comm_total
+            current_portfolio_pnl += (spot_price - stk) * mult_qty
         elif p_type == "Short Futures":
-            current_portfolio_pnl += (stk - spot_price) * mult_qty - comm_total
-        elif p_type == "Long Call Option":
-            current_portfolio_pnl += (np.maximum(0, spot_price - stk) - prem) * mult_qty - comm_total
-        elif p_type == "Short Call Option":
-            current_portfolio_pnl += (prem - np.maximum(0, spot_price - stk)) * mult_qty - comm_total
-        elif p_type == "Long Put Option":
-            current_portfolio_pnl += (np.maximum(0, stk - spot_price) - prem) * mult_qty - comm_total
-        elif p_type == "Short Put Option":
-            current_portfolio_pnl += (prem - np.maximum(0, stk - spot_price)) * mult_qty - comm_total
+            current_portfolio_pnl += (stk - spot_price) * mult_qty
+        elif "Call" in p_type:
+            c_val = bs_option_price(spot_price, stk, 30/365.0, risk_free_rate, volatility_input, "Call")
+            if "Long" in p_type:
+                current_portfolio_pnl += (c_val - prem) * mult_qty
+            else:
+                current_portfolio_pnl += (prem - c_val) * mult_qty
+        elif "Put" in p_type:
+            p_val = bs_option_price(spot_price, stk, 30/365.0, risk_free_rate, volatility_input, "Put")
+            if "Long" in p_type:
+                current_portfolio_pnl += (p_val - prem) * mult_qty
+            else:
+                current_portfolio_pnl += (prem - p_val) * mult_qty
 
 fig.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
 fig.add_trace(go.Scatter(
@@ -327,35 +429,13 @@ fig.add_trace(go.Scatter(
     mode='markers+text',
     name='Current Spot',
     marker=dict(color='red', size=12),
-    text=[f"Current Spot: {spot_price:.2f}<br>P&L: {current_portfolio_pnl:,.2f} THB"],
+    text=[f"Spot: {spot_price:.2f}<br>P&L: {current_portfolio_pnl:,.2f} THB"],
     textposition="top center",
-    hovertemplate="<b>Current Status</b><br>Spot: %{x:.2f}<br>Current P&L: %{y:,.2f}<extra></extra>"
+    hovertemplate="<b>Current Status</b><br>Spot: %{x:.2f}<br>P&L: %{y:,.2f}<extra></extra>"
 ))
 
-if show_breakeven and not market_trades.empty:
-    sign_change = np.where(np.diff(np.sign(total_payoff)))[0]
-    be_x = []
-    be_y = []
-    be_text = []
-    for idx_be in sign_change:
-        p_be = price_range[idx_be]
-        be_x.append(p_be)
-        be_y.append(0)
-        be_text.append(f"BE: {p_be:.2f}")
-    
-    if be_x:
-        fig.add_trace(go.Scatter(
-            x=be_x, y=be_y,
-            mode='markers+text',
-            name='Break-even Points',
-            marker=dict(color='green', symbol='x', size=12),
-            text=be_text,
-            textposition="bottom center",
-            hovertemplate="<b>Break-even</b><br>Price: %{x:.2f}<extra></extra>"
-        ))
-
 fig.update_layout(
-    title=f"{selected_market} Strategy Payoff Chart ({payoff_mode})",
+    title=f"{selected_market} Net Portfolio Payoff ({payoff_mode})",
     xaxis_title="Underlying Price at Expiry",
     yaxis_title=f"Profit / Loss ({payoff_mode})",
     hovermode="x unified",
@@ -368,82 +448,94 @@ st.plotly_chart(fig, use_container_width=True)
 
 
 # ==========================================
-# กราฟที่ 2: จำลอง Payoff แบบรายวัน (Daily Time Decay Simulation)
+# กราฟที่ 2: จำลอง Payoff รายวันตามวันที่บันทึกจริง & เลือกวันจำลองได้
 # ==========================================
-st.subheader(f"⏱️ 2. จำลองกราฟ Payoff รายวัน (Time Decay Simulation)")
-st.markdown("แสดงเส้นมูลค่าพอร์ตจำลองล่วงหน้าตามจำนวนวันที่เหลืออยู่ก่อนหมดอายุ (สเตปละ 0, 7, 15, 30 วัน หรือตามวันหมดอายุจริง)")
+st.subheader(f"⏱️ 2. จำลองกราฟ Payoff รายวัน (Interactive Date Simulation)")
+st.markdown("ระบบจะจำลองมูลค่าพอร์ตย้อนหลังหรือล่วงหน้าอิงตามวันที่บันทึกจริง (`Trade Date`) และวันหมดอายุ (`Expiry Date`) โดยคุณสามารถเลือกวันที่ต้องการจำลองได้อิสระ")
+
+sim_col1, sim_col2 = st.columns(2)
+with sim_col1:
+    sim_date = st.date_input("เลือกวันที่ต้องการจำลองสถานะพอร์ต (Simulation Date)", value=date.today())
 
 fig_daily = go.Figure()
 
 if not market_trades.empty:
-    # หาค่าวันหมดอายุสูงสุดในพอร์ตเพื่อทำ Simulation ช่วงเวลา
-    max_days = 30
-    for idx, row in market_trades.iterrows():
-        try:
-            exp_d = datetime.strptime(str(row["ExpiryDate"]), "%Y-%m-%d").date()
-            d_rem = (exp_d - today).days
-            if d_rem > max_days:
-                max_days = d_rem
-        except:
-            pass
-
-    # กำหนดจุดเวลาที่จะนำมาวาดจำลอง (เช่น วันนี้, อีก 7 วัน, อีก 15 วัน, อีก 30 วัน และวันหมดอายุ 0)
-    step_days = sorted(list(set([0, min(max_days, 7), min(max_days, 15), min(max_days, 30), max_days])))
-    
-    # สีสำหรับแต่ละเส้นเวลา (ไล่เฉด)
+    # คำนวณวันเหลือเทียบกับวันที่เลือกจำลอง
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
-
-    for i, d_rem in enumerate(step_days):
-        T_sim = max(d_rem, 0) / 365.0
+    
+    # ดึงรายการวันที่บันทึกจริงที่ไม่ซ้ำกันมาทำ Simulation เส้นรายวัน
+    unique_trade_dates = sorted(list(set(market_trades["TradeDate"].astype(str))))
+    
+    # เพิ่มวันจำลองที่ผู้ใช้เลือกผ่าน Datepicker
+    sim_date_str = str(sim_date)
+    if sim_date_str not in unique_trade_dates:
+        unique_trade_dates.append(sim_date_str)
+    
+    for i, t_date_str in enumerate(unique_trade_dates):
+        try:
+            t_d = datetime.strptime(t_date_str, "%Y-%m-%d").date()
+        except:
+            t_d = date.today()
+            
         daily_portfolio_value = np.zeros_like(price_range)
-
+        
         for idx, row in market_trades.iterrows():
             p_type = row["Type"]
             stk = float(row["Strike"])
             prem = float(row["Premium"])
             qty = int(row["Contracts"])
-            comm_total = float(row["Commission"]) * qty if include_comm else 0.0
-            mult_qty = qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty
-
+            status = row["Status"]
+            sign_multiplier = 1 if status == "Open" else -1
+            mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty) * sign_multiplier
+            
+            try:
+                exp_d = datetime.strptime(str(row["ExpiryDate"]), "%Y-%m-%d").date()
+                # คำนวณ T เหลือรอดนับจากวันที่จำลอง (sim_date) ไปจนถึงวันหมดอายุ (expiry_date)
+                rem_days = (exp_d - t_d).days
+                T_sim = max(rem_days, 0) / 365.0
+            except:
+                T_sim = 30 / 365.0
+                
             if p_type == "Long Futures":
-                val = (price_range - stk) * mult_qty - comm_total
+                val = (price_range - stk) * mult_qty
             elif p_type == "Short Futures":
-                val = (stk - price_range) * mult_qty - comm_total
+                val = (stk - price_range) * mult_qty
             elif "Call" in p_type:
-                # คำนวณมูลค่าทางทฤษฎี Black-Scholes ตาม T_sim
                 opt_values = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Call") for p in price_range])
                 if "Long" in p_type:
-                    val = (opt_values - prem) * mult_qty - comm_total
+                    val = (opt_values - prem) * mult_qty
                 else:
-                    val = (prem - opt_values) * mult_qty - comm_total
+                    val = (prem - opt_values) * mult_qty
             elif "Put" in p_type:
                 opt_values = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Put") for p in price_range])
                 if "Long" in p_type:
-                    val = (opt_values - prem) * mult_qty - comm_total
+                    val = (opt_values - prem) * mult_qty
                 else:
-                    val = (prem - opt_values) * mult_qty - comm_total
+                    val = (prem - opt_values) * mult_qty
             else:
                 val = 0
-
+                
             daily_portfolio_value += val
-
+            
         line_color = colors[i % len(colors)]
-        line_width = 3 if d_rem == 0 else 1.5
-        line_dash = 'solid' if d_rem == 0 else 'dash'
+        is_selected_sim = (t_date_str == sim_date_str)
+        line_width = 3.5 if is_selected_sim else 1.5
+        line_dash = 'solid' if is_selected_sim else 'dash'
+        label_text = f"จำลอง ณ วันที่: {t_date_str}" + (" ⭐ (วันที่เลือก)" if is_selected_sim else "")
 
         fig_daily.add_trace(go.Scatter(
             x=price_range, y=daily_portfolio_value,
             mode='lines',
-            name=f"เหลือเวลา {d_rem} วัน (T = {d_rem}d)",
+            name=label_text,
             line=dict(color=line_color, width=line_width, dash=line_dash),
-            hovertemplate=f"<b>เหลือ {d_rem} วัน</b><br>Price: %{{x:.2f}}<br>Value: %{{y:,.2f}}<extra></extra>"
+            hovertemplate=f"<b>{t_date_str}</b><br>Price: %{{x:.2f}}<br>Value: %{{y:,.2f}}<extra></extra>"
         ))
 
 fig_daily.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 fig_daily.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
 
 fig_daily.update_layout(
-    title=f"Time Decay Payoff Simulation ({selected_market})",
+    title=f"Time Decay Daily Simulation by Trade Dates ({selected_market})",
     xaxis_title="Underlying Price",
     yaxis_title=f"Portfolio Value ({payoff_mode})",
     hovermode="x unified",
@@ -455,7 +547,7 @@ fig_daily.update_layout(
 st.plotly_chart(fig_daily, use_container_width=True)
 
 if market_trades.empty:
-    st.info(f"💡 ขณะนี้ยังไม่มีรายการเทรดในตลาด `{selected_market}` กรุณาเพิ่มรายการเทรดจากเมนูด้านซ้ายเพื่อแสดงกราฟจำลองรายวัน")
+    st.info(f"💡 ขณะนี้ยังไม่มีรายการเทรดในตลาด `{selected_market}` กรุณาเพิ่มรายการเทรดเพื่อแสดงกราฟจำลองรายวัน")
 
 st.subheader("📐 สรุปค่า Greeks และสถานะพอร์ต")
 g1, g2, g3, g4 = st.columns(4)

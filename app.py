@@ -9,15 +9,26 @@ from scipy.stats import norm
 
 st.set_page_config(page_title="TFEX Multi-Asset Payoff & Greeks Dashboard Pro", layout="wide")
 
-TRADE_FILE = "trades_multi_asset_pro.csv"
-
 # กำหนดโซนเวลา Bangkok (UTC+7)
 BANGKOK_TZ = timezone(timedelta(hours=7))
 
-# --- ฟังก์ชันจัดการข้อมูล (CRUD) ---
-def load_trades():
-    if os.path.exists(TRADE_FILE):
-        df = pd.read_csv(TRADE_FILE)
+# --- ฟังก์ชันจัดการไฟล์พอร์ตหลายพอร์ต ---
+def get_available_portfolios():
+    # ค้นหาไฟล์ csv ทั้งหมดในโฟลเดอร์ปัจจุบันที่ขึ้นต้นด้วย portfolio_ หรือใช้ไฟล์หลัก
+    files = [f for f in os.listdir('.') if f.startswith('portfolio_') and f.endswith('.csv')]
+    if not files:
+        # ถ้ายังไม่มี ให้สร้างไฟล์เริ่มต้นขึ้นมา 3 พอร์ต
+        default_files = ["portfolio_1.csv", "portfolio_2.csv", "portfolio_3.csv"]
+        for df_file in default_files:
+            if not os.path.exists(df_file):
+                empty_df = pd.DataFrame(columns=["ID", "Market", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot"])
+                empty_df.to_csv(df_file, index=False)
+        files = default_files
+    return sorted(files)
+
+def load_trades_from_file(file_name):
+    if os.path.exists(file_name):
+        df = pd.read_csv(file_name)
         expected_cols = ["ID", "Market", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot"]
         for col in expected_cols:
             if col not in df.columns:
@@ -34,8 +45,8 @@ def load_trades():
         return df
     return pd.DataFrame(columns=["ID", "Market", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot"])
 
-def save_trades(df):
-    df.to_csv(TRADE_FILE, index=False)
+def save_trades_to_file(df, file_name):
+    df.to_csv(file_name, index=False)
 
 # --- ดึงข้อมูลราคาและคำนวณ Volatility อัตโนมัติจาก Yahoo Finance ---
 @st.cache_data(ttl=10)
@@ -125,9 +136,31 @@ def bs_greeks(S, K, T, r, sigma, option_type):
 
 # --- UI หลัก ---
 st.title("📈 TFEX Multi-Asset Options & Futures Pro Dashboard")
-st.markdown("ระบบวิเคราะห์ Payoff Chart รองรับ Gross Position (Open/Close), Time Decay รายวันตามวันที่บันทึก และ Strike Dropdown อัตโนมัติ")
+st.markdown("ระบบวิเคราะห์ Payoff Chart รองรับ Gross Position, Multi-Portfolio Management และ Strike Dropdown ตามรูปแบบสเตปตลาด")
 
-# เลือกตลาดหลักใน Sidebar
+# --- แถบ Sidebar จัดการพอร์ตและตลาด ---
+st.sidebar.header("📁 จัดการพอร์ตเทรด (Portfolio Management)")
+available_portfolios = get_available_portfolios()
+
+# เลือกพอร์ตหลักสำหรับบันทึกรายการเพิ่ม
+active_portfolio = st.sidebar.selectbox("เลือกพอร์ตหลักเพื่อบันทึกเทรด", available_portfolios)
+
+# ฟังก์ชันสร้างพอร์ตใหม่
+new_port_name = st.sidebar.text_input("ชื่อพอร์ตใหม่ (เช่น portfolio_4.csv)")
+if st.sidebar.button("➕ สร้างพอร์ตใหม่"):
+    if new_port_name:
+        if not new_port_name.endswith(".csv"):
+            new_port_name += ".csv"
+        target_path = new_port_name
+        if not os.path.exists(target_path):
+            empty_df = pd.DataFrame(columns=["ID", "Market", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot"])
+            empty_df.to_csv(target_path, index=False)
+            st.sidebar.success(f"สร้างพอร์ต {target_path} สำเร็จ!")
+            st.rerun()
+        else:
+            st.sidebar.warning("ชื่อพอร์ตนี้มีอยู่แล้ว")
+
+st.sidebar.markdown("---")
 st.sidebar.header("⚙️ เลือกตลาดและตั้งค่า")
 selected_market = st.sidebar.selectbox("เลือกตลาด TFEX", ["TFEX USD/THB", "TFEX SET50"])
 
@@ -156,22 +189,21 @@ volatility_input = st.sidebar.slider(
 risk_free_rate = 0.025
 contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
-trades_df = load_trades()
+# โหลดข้อมูลจากพอร์ตหลักที่กำลังเลือกอยู่
+trades_df = load_trades_from_file(active_portfolio)
 
-# --- สร้างรายการ Strike แบบ Dropdown จัดรูปแบบทศนิยม (USDTHB = 2 ตำแหน่ง, SET50 = เลขจำนวนเต็ม) ---
+# --- สร้างรายการ Strike แบบ Dropdown ตามสเตปตัวเลขกลมๆ และฟอร์แมตทศนิยมตามตลาด ---
 if selected_market == "TFEX USD/THB":
     base_center = round(spot_price * 4) / 4.0
     step = 0.25
-    # สร้างรายการเป็น float แล้วจัดฟอร์แมต string ทศนิยม 2 ตำแหน่ง
     base_strikes = [f"{round(base_center + i * step, 2):.2f}" for i in range(-25, 26)]
 else:
     base_center = round(spot_price / 10.0) * 10.0
     step = 10.0
-    # สร้างรายการเป็น int (ไม่มีทศนิยม)
     base_strikes = [int(round(base_center + i * step)) for i in range(-20, 21)]
 
-# --- ฟอร์มเพิ่ม / แก้ไขรายการเทรด ---
-st.sidebar.subheader("➕ เพิ่มสถานะการเทรด (Gross Position)")
+# --- ฟอร์มเพิ่ม / แก้ไขรายการเทรดลงในพอร์ตหลัก ---
+st.sidebar.subheader(f"➕ เพิ่มสถานะการเทรด (ลงในพอร์ต: {active_portfolio})")
 with st.sidebar.form("trade_form"):
     strategy_name = st.text_input("ชื่อกลยุทธ์ / Note", "Strategy #1")
     default_series = "USDU26" if selected_market == "TFEX USD/THB" else "S50U26"
@@ -186,20 +218,13 @@ with st.sidebar.form("trade_form"):
     
     strike_mode = st.radio("เลือกรูปแบบราคาใช้สิทธิ (Strike)", ["เลือกจาก Dropdown (สเตปอัตโนมัติ)", "พิมพ์ระบุเอง"])
     if strike_mode == "เลือกจาก Dropdown (สเตปอัตโนมัติ)":
-        # แปลงค่าใน Dropdown กลับเป็นตัวเลข float เพื่อใช้คำนวณต่อได้ทันที
         if selected_market == "TFEX USD/THB":
             closest_val = round(spot_price * 4) / 4.0
             closest_str = f"{closest_val:.2f}"
-            if closest_str in base_strikes:
-                default_idx = base_strikes.index(closest_str)
-            else:
-                default_idx = len(base_strikes) // 2
+            default_idx = base_strikes.index(closest_str) if closest_str in base_strikes else len(base_strikes) // 2
         else:
             closest_val = int(round(spot_price / 10.0) * 10.0)
-            if closest_val in base_strikes:
-                default_idx = base_strikes.index(closest_val)
-            else:
-                default_idx = len(base_strikes) // 2
+            default_idx = base_strikes.index(closest_val) if closest_val in base_strikes else len(base_strikes) // 2
                 
         selected_strike_item = st.selectbox("ราคาใช้สิทธิ (Strike)", options=base_strikes, index=default_idx)
         strike = float(selected_strike_item)
@@ -236,44 +261,67 @@ with st.sidebar.form("trade_form"):
             "EntrySpot": spot_price
         }])
         trades_df = pd.concat([trades_df, new_row], ignore_index=True)
-        save_trades(trades_df)
-        st.sidebar.success("เพิ่มข้อมูลสำเร็จ!")
+        save_trades_to_file(trades_df, active_portfolio)
+        st.sidebar.success(f"บันทึกข้อมูลลงใน {active_portfolio} สำเร็จ!")
         st.rerun()
 
-# --- แสดงตารางจัดการข้อมูลพอร์ต (แก้ไข / ลบได้) ---
-st.subheader("📋 รายการเทรดในพอร์ตทั้งหมด (รองรับ Gross Position & ราคาอ้างอิงตอนเข้า)")
+# --- แสดงตารางจัดการข้อมูลพอร์ตหลัก (แก้ไข / ลบได้) ---
+st.subheader(f"📋 รายการเทรดในพอร์ตหลักปัจจุบัน: `{active_portfolio}`")
 if not trades_df.empty:
     edited_df = st.data_editor(trades_df, num_rows="dynamic", use_container_width=True, key="trade_editor")
     
     col_btn1, col_btn2 = st.columns([1, 4])
     with col_btn1:
         if st.button("💾 บันทึกการแก้ไขตาราง"):
-            save_trades(edited_df)
+            save_trades_to_file(edited_df, active_portfolio)
             st.success("บันทึกการเปลี่ยนแปลงเรียบร้อย!")
             st.rerun()
     with col_btn2:
-        if st.button("🗑️ ลบข้อมูลทั้งหมดในพอร์ต"):
-            if os.path.exists(TRADE_FILE):
-                os.remove(TRADE_FILE)
+        if st.button(f"🗑️ ล้างข้อมูลทั้งหมดใน {active_portfolio}"):
+            empty_df = pd.DataFrame(columns=["ID", "Market", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot"])
+            save_trades_to_file(empty_df, active_portfolio)
             st.rerun()
     trades_df = edited_df
 else:
-    st.info("ยังไม่มีข้อมูลในพอร์ต กรุณาเพิ่มสัญญาจากเมนูด้านซ้ายเพื่อเริ่มต้นบันทึกข้อมูล")
+    st.info(f"พอร์ต `{active_portfolio}` ยังไม่มีข้อมูล กรุณาเพิ่มสัญญาจากเมนูด้านซ้าย")
 
-# --- กรองข้อมูลเฉพาะตลาดที่เลือก ---
+# --- ฟังก์ชันเลือกพอร์ตเพื่อรวมกันดู Payoff (Merge Portfolios for Combined Payoff) ---
+st.markdown("---")
+st.subheader("🔀 ฟังก์ชันรวมพอร์ตเพื่อดู Payoff รวมกัน (Combine Portfolios)")
+st.markdown("คุณสามารถเลือกติ๊กพอร์ตที่บันทึกไว้หลายพอร์ตพร้อมกัน เพื่อนำสัญญามาคำนวณกราฟ Payoff รวมและวิเคราะห์ Greeks ร่วมกันได้ทันที")
+
+selected_portfolios_for_merge = st.multiselect(
+    "เลือกพอร์ตที่ต้องการนำมารวมกัน (เลือกได้มากกว่า 1 พอร์ต)",
+    options=available_portfolios,
+    default=[active_portfolio]
+)
+
+# รวมข้อมูล DataFrame จากทุกพอร์ตที่ถูกเลือก
+combined_trades_df = pd.DataFrame()
+if selected_portfolios_for_merge:
+    dfs = []
+    for p_file in selected_portfolios_for_merge:
+        p_df = load_trades_from_file(p_file)
+        if not p_df.empty:
+            p_df['Source_Portfolio'] = p_file
+            dfs.append(p_df)
+    if dfs:
+        combined_trades_df = pd.concat(dfs, ignore_index=True)
+
+# กรองข้อมูลเฉพาะตลาดที่เลือก
 market_trades = pd.DataFrame()
-if not trades_df.empty and "Market" in trades_df.columns:
-    market_trades = trades_df[trades_df["Market"] == selected_market]
+if not combined_trades_df.empty and "Market" in combined_trades_df.columns:
+    market_trades = combined_trades_df[combined_trades_df["Market"] == selected_market]
 
 # ==========================================
-# ตารางสรุปสถานะ Open/Close และกำไรขาดทุนเทียบกับราคาอ้างอิง
+# ตารางสรุปสถานะ Open/Close และกำไรขาดทุนเทียบกับราคาอ้างอิง (ของพอร์ตที่รวมกัน)
 # ==========================================
-st.subheader("📊 ตารางสรุปจำนวนสัญญา (Open vs Close) และผลกำไร/ขาดทุนปัจจุบัน")
+st.subheader("📊 ตารางสรุปสัญญาและกำไร/ขาดทุน (จากพอร์ตที่เลือกมารวมกัน)")
 if not market_trades.empty:
     summary_list = []
-    grouped = market_trades.groupby(["Series", "Strike", "Type"])
+    grouped = market_trades.groupby(["Source_Portfolio", "Series", "Strike", "Type"])
     for key, group in grouped:
-        ser, stk, p_type = key
+        p_src, ser, stk, p_type = key
         open_qty = group[group["Status"] == "Open"]["Contracts"].sum()
         close_qty = group[group["Status"] == "Close"]["Contracts"].sum()
         net_qty = open_qty - close_qty
@@ -307,6 +355,7 @@ if not market_trades.empty:
                     item_pnl += (r_prem - curr_opt_val) * r_qty * mult_qty * dir_factor - r_comm
 
         summary_list.append({
+            "Portfolio": p_src,
             "Series": ser,
             "Strike": stk,
             "Type": p_type,
@@ -319,12 +368,12 @@ if not market_trades.empty:
     summary_df = pd.DataFrame(summary_list)
     st.dataframe(summary_df, use_container_width=True)
 else:
-    st.info("ยังไม่มีข้อมูลสรุปสำหรับตลาดนี้")
+    st.info("ไม่มีข้อมูลสัญญาในพอร์ตที่เลือกสำหรับตลาดนี้")
 
 # ==========================================
 # กราฟที่ 1: Payoff ณ วันหมดอายุ (Expiry Payoff)
 # ==========================================
-st.subheader(f"📈 1. วิเคราะห์ Payoff ณ วันหมดอายุ ({selected_market})")
+st.subheader(f"📈 1. วิเคราะห์ Payoff รวม ณ วันหมดอายุ ({selected_market})")
 
 c_opt1, c_opt2, c_opt3, c_opt4 = st.columns(4)
 with c_opt1:
@@ -396,18 +445,18 @@ if not market_trades.empty:
         fig.add_trace(go.Scatter(
             x=price_range, y=payoff,
             mode='lines',
-            name=f"[{status}] {row['Strategy']} ({row['Series']} {p_type})",
+            name=f"[{row['Source_Portfolio']}] [{status}] {row['Strategy']} ({p_type})",
             line=dict(dash='dash', width=1.5),
             opacity=0.5,
-            hovertemplate=f"<b>[{status}] {row['Strategy']} ({p_type})</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
+            hovertemplate=f"<b>[{row['Source_Portfolio']}] {p_type}</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
         ))
 
 fig.add_trace(go.Scatter(
     x=price_range, y=total_payoff,
     mode='lines',
-    name='Total Net Portfolio Payoff',
+    name='Combined Net Portfolio Payoff',
     line=dict(color='blue', width=3),
-    hovertemplate="<b>Total Net Portfolio</b><br>Price at Expiry: %{x:.2f}<br>Total P&L: %{y:,.2f}<extra></extra>"
+    hovertemplate="<b>Combined Net Portfolio</b><br>Price at Expiry: %{x:.2f}<br>Total P&L: %{y:,.2f}<extra></extra>"
 ))
 
 fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
@@ -452,7 +501,7 @@ fig.add_trace(go.Scatter(
 ))
 
 fig.update_layout(
-    title=f"{selected_market} Net Portfolio Payoff ({payoff_mode})",
+    title=f"Combined Portfolios Net Payoff ({payoff_mode})",
     xaxis_title="Underlying Price at Expiry",
     yaxis_title=f"Profit / Loss ({payoff_mode})",
     hovermode="x unified",
@@ -467,8 +516,8 @@ st.plotly_chart(fig, use_container_width=True)
 # ==========================================
 # กราฟที่ 2: จำลอง Payoff รายวันตามวันที่บันทึกจริง & เลือกวันจำลองได้
 # ==========================================
-st.subheader(f"⏱️ 2. จำลองกราฟ Payoff รายวัน (Interactive Date Simulation)")
-st.markdown("ระบบจะจำลองมูลค่าพอร์ตย้อนหลังหรือล่วงหน้าอิงตามวันที่บันทึกจริง (`Trade Date`) และวันหมดอายุ (`Expiry Date`) โดยคุณสามารถเลือกวันที่ต้องการจำลองได้อิสระ")
+st.subheader(f"⏱️ 2. จำลองกราฟ Payoff รายวันรวม (Interactive Date Simulation)")
+st.markdown("ระบบจะจำลองมูลค่าพอร์ตย้อนหลังหรือล่วงหน้าของทุกพอร์ตที่ถูกเลือกมารวมกัน")
 
 sim_col1, sim_col2 = st.columns(2)
 with sim_col1:
@@ -547,7 +596,7 @@ fig_daily.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 fig_daily.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
 
 fig_daily.update_layout(
-    title=f"Time Decay Daily Simulation by Trade Dates ({selected_market})",
+    title=f"Combined Portfolios Time Decay Simulation ({selected_market})",
     xaxis_title="Underlying Price",
     yaxis_title=f"Portfolio Value ({payoff_mode})",
     hovermode="x unified",
@@ -559,11 +608,11 @@ fig_daily.update_layout(
 st.plotly_chart(fig_daily, use_container_width=True)
 
 if market_trades.empty:
-    st.info(f"💡 ขณะนี้ยังไม่มีรายการเทรดในตลาด `{selected_market}` กรุณาเพิ่มรายการเทรดเพื่อแสดงกราฟจำลองรายวัน")
+    st.info(f"💡 ขณะนี้ยังไม่มีรายการเทรดในพอร์ตที่เลือกสำหรับตลาด `{selected_market}`")
 
-st.subheader("📐 สรุปค่า Greeks และสถานะพอร์ต")
+st.subheader("📐 สรุปค่า Greeks รวมของพอร์ตที่เลือก")
 g1, g2, g3, g4 = st.columns(4)
-g1.metric("Portfolio Delta", f"{total_greeks['Delta']:,.2f}")
-g2.metric("Portfolio Gamma", f"{total_greeks['Gamma']:,.4f}")
-g3.metric("Portfolio Theta (Daily)", f"{total_greeks['Theta']:,.2f} THB")
-g4.metric("Portfolio Vega", f"{total_greeks['Vega']:,.2f}")
+g1.metric("Combined Portfolio Delta", f"{total_greeks['Delta']:,.2f}")
+g2.metric("Combined Portfolio Gamma", f"{total_greeks['Gamma']:,.4f}")
+g3.metric("Combined Portfolio Theta (Daily)", f"{total_greeks['Theta']:,.2f} THB")
+g4.metric("Combined Portfolio Vega", f"{total_greeks['Vega']:,.2f}")

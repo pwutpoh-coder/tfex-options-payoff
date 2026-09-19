@@ -133,14 +133,18 @@ selected_market = st.sidebar.selectbox("เลือกตลาด TFEX", ["TFE
 
 current_spot, auto_volatility, last_update_time = get_market_data(selected_market)
 
-col_r1, col_r2 = st.columns([2, 6])
-with col_r1:
-    if st.button("🔄 รีเฟรชข้อมูลตลาดทันที"):
+# --- เพิ่มแถบแสดงข้อมูลราคาอ้างอิงสดๆ ฝั่งขวาของหน้าจอหลัก ---
+col_head1, col_head2, col_head3 = st.columns([1, 2, 4])
+with col_head1:
+    if st.button("🔄 รีเฟรชตลาด"):
         st.cache_data.clear()
         st.rerun()
+with col_head2:
+    st.metric(label=f"🟢 ราคา Spot ปัจจุบัน ({selected_market})", value=f"{current_spot:,.4f}")
+with col_head3:
+    st.markdown(f"**อัปเดตล่าสุด:** `{last_update_time}`")
 
-with col_r2:
-    st.markdown(f"**ตลาด:** `{selected_market}` | **อัปเดตล่าสุด:** `{last_update_time}`")
+st.markdown("---")
 
 spot_price = st.sidebar.number_input(f"ราคาอ้างอิงปัจจุบัน ({selected_market})", value=float(current_spot), format="%.4f")
 volatility_input = st.sidebar.slider(
@@ -189,7 +193,6 @@ with st.sidebar.form("trade_form"):
     default_comm = 30.0 if selected_market == "TFEX USD/THB" else 60.0
     commission = st.number_input("ค่าคอมมิชชั่นรวมต่อสัญญา (บาท)", value=float(default_comm), format="%.2f")
     
-    # ระบบเลือกวันที่บันทึก (ค่าเริ่มต้นคือวันนี้ แต่เลือกย้อนหลังหรือล่วงหน้าได้)
     trade_date = st.date_input("วันที่บันทึกรายการ (Trade Date)", value=date.today())
     expiry_date = st.date_input("วันหมดอายุสัญญา (Expiry Date)", value=date.today() + timedelta(days=30))
     
@@ -247,7 +250,6 @@ if not trades_df.empty and "Market" in trades_df.columns:
 st.subheader("📊 ตารางสรุปจำนวนสัญญา (Open vs Close) และผลกำไร/ขาดทุนปัจจุบัน")
 if not market_trades.empty:
     summary_list = []
-    # จัดกลุ่มตาม Series, Strike, Type เพื่อสรุปสถิติ
     grouped = market_trades.groupby(["Series", "Strike", "Type"])
     for key, group in grouped:
         ser, stk, p_type = key
@@ -255,7 +257,6 @@ if not market_trades.empty:
         close_qty = group[group["Status"] == "Close"]["Contracts"].sum()
         net_qty = open_qty - close_qty
         
-        # คำนวณ P&L ปัจจุบันเทียบกับราคา Spot ปัจจุบัน
         item_pnl = 0
         mult_qty = contract_multiplier
         for _, r_row in group.iterrows():
@@ -265,7 +266,6 @@ if not market_trades.empty:
             r_comm = float(r_row["Commission"]) * r_qty
             r_stat = r_row["Status"]
             
-            # ทิศทางสัญญากลับด้านหากเป็น Close
             dir_factor = 1 if r_stat == "Open" else -1
             
             if r_row["Type"] == "Long Futures":
@@ -302,7 +302,6 @@ else:
 
 # ==========================================
 # กราฟที่ 1: Payoff ณ วันหมดอายุ (Expiry Payoff)
-# คำนึงถึงสถานะ Open (+1) และ Close (-1)
 # ==========================================
 st.subheader(f"📈 1. วิเคราะห์ Payoff ณ วันหมดอายุ ({selected_market})")
 
@@ -332,7 +331,6 @@ if not market_trades.empty:
         status = row["Status"]
         comm_total = float(row["Commission"]) * qty if include_comm else 0.0
         
-        # ถ้ารสถานะเป็น Close น้ำหนักสัญญาจะเป็นลบเพื่อหักล้างสถานะ Open เดิม
         sign_multiplier = 1 if status == "Open" else -1
         
         try:
@@ -361,7 +359,6 @@ if not market_trades.empty:
             
         total_payoff += payoff
         
-        # คำนวณ Greeks เฉพาะสถานะ Open
         if status == "Open":
             opt_flag = "Call" if "Call" in p_type else ("Put" if "Put" in p_type else None)
             if opt_flag:
@@ -394,7 +391,6 @@ fig.add_trace(go.Scatter(
 
 fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 
-# คำนวณกำไรปัจจุบันรวม
 current_portfolio_pnl = 0
 if not market_trades.empty:
     for idx, row in market_trades.iterrows():
@@ -460,13 +456,9 @@ with sim_col1:
 fig_daily = go.Figure()
 
 if not market_trades.empty:
-    # คำนวณวันเหลือเทียบกับวันที่เลือกจำลอง
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
-    
-    # ดึงรายการวันที่บันทึกจริงที่ไม่ซ้ำกันมาทำ Simulation เส้นรายวัน
     unique_trade_dates = sorted(list(set(market_trades["TradeDate"].astype(str))))
     
-    # เพิ่มวันจำลองที่ผู้ใช้เลือกผ่าน Datepicker
     sim_date_str = str(sim_date)
     if sim_date_str not in unique_trade_dates:
         unique_trade_dates.append(sim_date_str)
@@ -490,7 +482,6 @@ if not market_trades.empty:
             
             try:
                 exp_d = datetime.strptime(str(row["ExpiryDate"]), "%Y-%m-%d").date()
-                # คำนวณ T เหลือรอดนับจากวันที่จำลอง (sim_date) ไปจนถึงวันหมดอายุ (expiry_date)
                 rem_days = (exp_d - t_d).days
                 T_sim = max(rem_days, 0) / 365.0
             except:

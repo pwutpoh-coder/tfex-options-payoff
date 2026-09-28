@@ -562,7 +562,7 @@ fig.update_layout(
 st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
-# กราฟที่ 2 & 3: จำลองรายวัน และแสดง Greeks
+# กราฟที่ 2 & 3: จำลองรายวัน และแสดง Greeks (แก้ไขส่วนการรวมขาสัญญา)
 # ==========================================
 st.subheader("⏱️ 2. จำลองกราฟ Payoff รายวัน (Time Decay Simulation)")
 sim_date = st.date_input("เลือกวันที่ต้องการจำลองสถานะ", value=date.today())
@@ -579,7 +579,7 @@ if not market_trades.empty:
         unique_trade_dates.append(sim_date_str)
         unique_trade_dates = sorted(unique_trade_dates)
 
-    # กราฟที่ 2.1: เฉพาะสัญญาที่เทรดในวันนั้นๆ (รวมทุกขาสัญญาในวันนั้น)
+    # กราฟที่ 2.1: รวมทุกขาสัญญาที่เปิดในวันนั้นๆ (รวม Strategy เดียวกันในวันนั้นเป็นเส้นเดียว)
     for i, t_date_str in enumerate(unique_trade_dates):
         try:
             t_d = datetime.strptime(t_date_str, "%Y-%m-%d").date()
@@ -589,10 +589,10 @@ if not market_trades.empty:
         day_specific_value = np.zeros_like(price_range)
         has_trade_on_day = False
         
-        # กรองทุกขาของสัญญาที่เทรดในวัน t_date_str (ไม่แยกทีละแถว เพื่อให้กลยุทธ์ Strangle/Spread มาครบทุกขาพร้อมกัน)
         day_trades = market_trades[market_trades["TradeDate"].astype(str) == t_date_str]
         if not day_trades.empty:
             has_trade_on_day = True
+            # วนลูปคำนวณรวมทุกขา (เช่น ขา Call และ Put ของ Strangle) ที่บันทึกในวันเดียวกัน
             for idx, row in day_trades.iterrows():
                 p_type = row["Type"]
                 stk = float(row["Strike"])
@@ -653,7 +653,7 @@ if not market_trades.empty:
                     hoverinfo='skip'
                 ))
 
-    # กราฟที่ 2.2: แบบสะสมยอดรวมถึงวันที่เลือก (รวบรวมสัญญาที่ TradeDate <= t_date_str ทั้งหมด)
+    # กราฟที่ 2.2: แบบสะสมยอดรวมถึงวันที่เลือก (รวบรวมทุกสัญญาทั้งหมดตั้งแต่วันเริ่มต้นจนถึง sim_date_str)
     for i, t_date_str in enumerate(unique_trade_dates):
         if t_date_str > sim_date_str:
             continue

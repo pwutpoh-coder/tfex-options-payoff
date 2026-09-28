@@ -118,7 +118,7 @@ def get_market_data(market_type):
         update_time = datetime.now(BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S (ICT)")
         return default_p, default_v, update_time
 
-# --- ฟังก์ชัน Black-Scholes สำหรับ Option Pricing ---
+# --- ฟังก์ชัน Black-Scholes สำหรับ Option Pricing (แก้ไขสูตร Put ให้ถูกต้อง) ---
 def bs_option_price(S, K, T, r, sigma, option_type):
     if T <= 0:
         if option_type == "Call":
@@ -133,7 +133,8 @@ def bs_option_price(S, K, T, r, sigma, option_type):
     if option_type == "Call":
         price = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
     else:
-        price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(d1)
+        # แก้ไขจาก norm.cdf(d1) เป็น norm.cdf(-d1) ให้ถูกต้องตามสูตร Black-Scholes
+        price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
     return price
 
 # --- ฟังก์ชันคำนวณ Greeks ---
@@ -562,7 +563,7 @@ fig.update_layout(
 st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
-# กราฟที่ 2 & 3: จำลองรายวัน และแสดง Greeks (แก้ไขส่วนการรวมขาสัญญา)
+# กราฟที่ 2 & 3: จำลองรายวัน และแสดง Greeks
 # ==========================================
 st.subheader("⏱️ 2. จำลองกราฟ Payoff รายวัน (Time Decay Simulation)")
 sim_date = st.date_input("เลือกวันที่ต้องการจำลองสถานะ", value=date.today())
@@ -579,7 +580,7 @@ if not market_trades.empty:
         unique_trade_dates.append(sim_date_str)
         unique_trade_dates = sorted(unique_trade_dates)
 
-    # กราฟที่ 2.1: รวมทุกขาสัญญาที่เปิดในวันนั้นๆ (รวม Strategy เดียวกันในวันนั้นเป็นเส้นเดียว)
+    # กราฟที่ 2.1: เฉพาะสัญญาที่เทรดในวันนั้นๆ (รวมทุกขาสัญญาในวันนั้น)
     for i, t_date_str in enumerate(unique_trade_dates):
         try:
             t_d = datetime.strptime(t_date_str, "%Y-%m-%d").date()
@@ -592,7 +593,6 @@ if not market_trades.empty:
         day_trades = market_trades[market_trades["TradeDate"].astype(str) == t_date_str]
         if not day_trades.empty:
             has_trade_on_day = True
-            # วนลูปคำนวณรวมทุกขา (เช่น ขา Call และ Put ของ Strangle) ที่บันทึกในวันเดียวกัน
             for idx, row in day_trades.iterrows():
                 p_type = row["Type"]
                 stk = float(row["Strike"])
@@ -653,7 +653,7 @@ if not market_trades.empty:
                     hoverinfo='skip'
                 ))
 
-    # กราฟที่ 2.2: แบบสะสมยอดรวมถึงวันที่เลือก (รวบรวมทุกสัญญาทั้งหมดตั้งแต่วันเริ่มต้นจนถึง sim_date_str)
+    # กราฟที่ 2.2: แบบสะสมยอดรวมถึงวันที่เลือก
     for i, t_date_str in enumerate(unique_trade_dates):
         if t_date_str > sim_date_str:
             continue

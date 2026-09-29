@@ -63,7 +63,6 @@ def get_available_portfolios():
         files = default_files
     return sorted(files)
 
-# ฟังก์ชันสำหรับตรวจสอบไฟล์พอร์ตที่มีการบันทึกอยู่ทั้งหมดในระบบปัจจุบัน
 def get_portfolio_summary():
     files = get_available_portfolios()
     summary_data = []
@@ -218,7 +217,6 @@ st.markdown("ระบบวิเคราะห์ Payoff Chart รองร�
 st.sidebar.header("📁 จัดการพอร์ตเทรด (ชีทพอร์ต)")
 available_portfolios = get_available_portfolios()
 
-# จัดการเลือกพอร์ตหลัก หรือสร้างชีทพอร์ตใหม่ทันทีโดยไม่ต้องแสดงช่องเลือกซ้ำซ้อน
 selected_portfolio_tab = st.sidebar.selectbox("เลือกแฟ้มพอร์ตปัจจุบัน", available_portfolios)
 active_portfolio = selected_portfolio_tab
 
@@ -241,7 +239,6 @@ if st.sidebar.button("สร้างและเปิดใช้งานพ�
         else:
             st.sidebar.warning("ชื่อพอร์ตนี้มีอยู่แล้วในระบบ")
 
-# แสดงสถานะไฟล์บันทึกการเทรดทั้งหมดใน Sidebar
 st.sidebar.markdown("---")
 st.sidebar.subheader("📂 สรุปไฟล์บันทึกการเทรดทั้งหมด")
 portfolio_summary_df = get_portfolio_summary()
@@ -253,7 +250,6 @@ selected_market = st.sidebar.selectbox("เลือกตลาด TFEX", ["TFE
 
 current_spot, auto_volatility, last_update_time = get_market_data(selected_market)
 
-# --- แถบแสดงข้อมูลราคาอ้างอิง ---
 col_head1, col_head2 = st.columns([1, 2])
 with col_head1:
     if st.button("🔄 รีเฟรชตลาด"):
@@ -298,7 +294,7 @@ for yr in [short_year, next_short_year]:
     for m in month_codes:
         generated_series_options.append(f"{prefix_code}{m}{yr}")
 
-# --- ฟอร์มเพิ่มรายการเทรด (รีเซ็ตปุ่มติ๊กยืนยันอัตโนมัติเมื่อกดส่งข้อมูลสำเร็จ) ---
+# --- ฟอร์มเพิ่มรายการเทรด ---
 st.sidebar.subheader(f"➕ เพิ่มสัญญาใหม่เข้าพอร์ต: `{active_portfolio}`")
 
 if "form_submitted_key" not in st.session_state:
@@ -410,7 +406,7 @@ if not trades_df.empty:
 else:
     st.info(f"พอร์ต `{active_portfolio}` ยังว่างอยู่")
 
-# --- ฟังก์ชันรวมพอร์ต (Combine Portfolios) และเมนูเลือกดูประวัติถาวรข้ามวัน ---
+# --- ฟังก์ชันรวมพอร์ต (Combine Portfolios) และประวัติถาวร ---
 st.markdown("<br><br>", unsafe_allow_html=True)
 st.subheader("🔀 รวมพอร์ตเพื่อวิเคราะห์ Payoff ร่วมกัน และประวัติถาวร")
 
@@ -464,7 +460,7 @@ if not combined_trades_df.empty and "Market" in combined_trades_df.columns:
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ==========================================
-# ตารางสรุป P&L (ณ ปัจจุบัน พร้อมคอลัมน์ Net Contracts และแถวสรุปผลรวม)
+# ตารางสรุป P&L (ณ ปัจจุบัน - แก้ไขใช้ T ตาม ExpiryDate จริง)
 # ==========================================
 st.subheader("📊 ตารางสรุปสถานะและ P&L ณ ราคาอ้างอิงปัจจุบัน")
 if not market_trades.empty:
@@ -501,18 +497,26 @@ if not market_trades.empty:
             r_stat = r_row["Status"]
             dir_factor = 1 if r_stat == "Open" else -1
             
+            # คำนวณ Time to Expiry (T) ให้ตรงกับ ExpiryDate จริง ไม่ใช้ 30 วันตายตัว
+            try:
+                exp_d = datetime.strptime(str(r_row["ExpiryDate"]), "%Y-%m-%d").date()
+                rem_days = (exp_d - date.today()).days
+                T_val = max(rem_days, 0) / 365.0
+            except:
+                T_val = 30 / 365.0
+            
             if r_row["Type"] == "Long Futures":
                 item_pnl += (spot_price - r_stk) * r_qty * mult_qty * dir_factor - r_comm
             elif r_row["Type"] == "Short Futures":
                 item_pnl += (r_stk - spot_price) * r_qty * mult_qty * dir_factor - r_comm
             elif "Call" in r_row["Type"]:
-                curr_opt_val = bs_option_price(spot_price, r_stk, 30/365.0, risk_free_rate, volatility_input, "Call")
+                curr_opt_val = bs_option_price(spot_price, r_stk, T_val, risk_free_rate, volatility_input, "Call")
                 if "Long" in r_row["Type"]:
                     item_pnl += (curr_opt_val - r_prem) * r_qty * mult_qty * dir_factor - r_comm
                 else:
                     item_pnl += (r_prem - curr_opt_val) * r_qty * mult_qty * dir_factor - r_comm
             elif "Put" in r_row["Type"]:
-                curr_opt_val = bs_option_price(spot_price, r_stk, 30/365.0, risk_free_rate, volatility_input, "Put")
+                curr_opt_val = bs_option_price(spot_price, r_stk, T_val, risk_free_rate, volatility_input, "Put")
                 if "Long" in r_row["Type"]:
                     item_pnl += (curr_opt_val - r_prem) * r_qty * mult_qty * dir_factor - r_comm
                 else:
@@ -551,7 +555,7 @@ else:
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 1: Payoff ณ วันหมดอายุ (แก้ไขตำแหน่งชื่อ, ข้อความ Spot ด้านบนไม่มีกรอบ และเพิ่มพื้นที่ห่าง)
+# กราฟที่ 1: Payoff ณ วันหมดอายุ
 # ==========================================
 st.subheader(f"📈 1. Payoff รวม ณ วันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วยแสดงผลกราฟ Payoff", ["บาทรวม (THB)", "จุด (Points)"])
@@ -669,7 +673,6 @@ fig.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
 
 pnl_status_str = f"กำไร: +{spot_pnl_at_expiry:,.2f}" if spot_pnl_at_expiry >= 0 else f"ขาดทุน: {spot_pnl_at_expiry:,.2f}"
 
-# วางข้อความ Spot ไว้ด้านบนสุดของกรอบกราฟแบบไม่มีกรอบสี่เหลี่ยม เพื่อป้องกันการทับซ้อนกับชื่อหัวข้อกราฟและ Legend
 fig.add_annotation(
     x=spot_price,
     y=1.03,
@@ -693,12 +696,12 @@ fig.update_layout(
     yaxis_title=f"P&L ({payoff_mode})",
     hovermode="x unified",
     template="plotly_white",
-    height=560, # เพิ่มความสูงกราฟให้โปร่งขึ้น
-    margin=dict(t=80, b=50, l=50, r=50), # กำหนดระยะห่างขอบบนและล่างไม่ให้ข้อความชนกัน
+    height=560,
+    margin=dict(t=80, b=50, l=50, r=50),
     legend=dict(
         orientation="h", 
         yanchor="bottom", 
-        y=1.12, # ดันแถบ Legend ขึ้นไปด้านบนสุดไม่ให้ทับชื่อกราฟหรือข้อความ Spot
+        y=1.12, 
         xanchor="right", 
         x=1
     )

@@ -63,6 +63,31 @@ def get_available_portfolios():
         files = default_files
     return sorted(files)
 
+# ฟังก์ชันสำหรับตรวจสอบไฟล์พอร์ตที่มีการบันทึกอยู่ทั้งหมดในระบบปัจจุบัน
+def get_portfolio_summary():
+    files = get_available_portfolios()
+    summary_data = []
+    for f in files:
+        if os.path.exists(f):
+            try:
+                df = pd.read_csv(f)
+                num_trades = len(df)
+            except:
+                num_trades = 0
+            file_size = os.path.getsize(f)
+            mod_time = datetime.fromtimestamp(os.path.getmtime(f), BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            num_trades = 0
+            file_size = 0
+            mod_time = "N/A"
+        summary_data.append({
+            "ชื่อไฟล์พอร์ต": f,
+            "จำนวนรายการเทรด": num_trades,
+            "ขนาดไฟล์ (Bytes)": file_size,
+            "แก้ไขล่าสุด": mod_time
+        })
+    return pd.DataFrame(summary_data)
+
 def load_trades_from_file(file_name):
     expected_cols = [
         "ID", "Market", "Strategy", "Series", "Type", "Status", 
@@ -87,7 +112,6 @@ def load_trades_from_file(file_name):
 
 def save_trades_to_file(df, file_name):
     df.to_csv(file_name, index=False)
-    # บันทึกสำเนาลงไฟล์ประวัติถาวร (Archive) แบบไม่ทับของเก่า แต่เพิ่มเรกคอร์ด
     if os.path.exists(ARCHIVE_FILE):
         df_arch = pd.read_csv(ARCHIVE_FILE)
     else:
@@ -97,7 +121,6 @@ def save_trades_to_file(df, file_name):
     df_copy["PortfolioSource"] = file_name
     df_copy["SavedAt"] = datetime.now(BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S")
     
-    # รวมและเก็บประวัติถาวร
     updated_arch = pd.concat([df_arch, df_copy], ignore_index=True).drop_duplicates(subset=["PortfolioSource", "ID", "TradeDate", "Strike", "Type"], keep="last")
     updated_arch.to_csv(ARCHIVE_FILE, index=False)
 
@@ -159,7 +182,7 @@ def bs_option_price(S, K, T, r, sigma, option_type):
     if option_type == "Call":
         price = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
     else:
-        price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-1 * d1) # ป้องกัน bug เครื่องหมาย
+        price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-1 * d1)
     return price
 
 # --- ฟังก์ชันคำนวณ Greeks ---
@@ -212,6 +235,12 @@ if st.sidebar.button("➕ สร้างพอร์ตใหม่"):
             st.rerun()
         else:
             st.sidebar.warning("ชื่อพอร์ตนี้มีอยู่แล้ว")
+
+# แสดงสถานะไฟล์บันทึกการเทรดทั้งหมดใน Sidebar
+st.sidebar.markdown("---")
+st.sidebar.subheader("📂 ไฟล์บันทึกการเทรดทั้งหมด")
+portfolio_summary_df = get_portfolio_summary()
+st.sidebar.dataframe(portfolio_summary_df, use_container_width=True, hide_index=True)
 
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ ตั้งค่าตลาด")
@@ -307,7 +336,6 @@ with st.sidebar.form("trade_form"):
     trade_date = st.date_input("วันที่ซื้อขาย (Trade Date)", value=date.today())
     expiry_date = st.date_input("วันหมดอายุ (Expiry Date)", value=date.today() + timedelta(days=30))
     
-    # เพิ่มตัวเลือกยืนยันการบันทึกเพื่อป้องกันการบันทึกซ้ำ
     confirm_add = st.checkbox("☑️ ยืนยันความถูกต้องเพื่อบันทึกข้อมูล", value=False)
     
     submitted = st.form_submit_button("บันทึกเพิ่มเข้าพอร์ต")
@@ -423,7 +451,6 @@ market_trades = pd.DataFrame()
 if not combined_trades_df.empty and "Market" in combined_trades_df.columns:
     market_trades = combined_trades_df[combined_trades_df["Market"] == selected_market]
 
-# เพิ่มระยะห่างก่อนเข้าตารางสรุป P&L
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ==========================================
@@ -479,11 +506,10 @@ if not market_trades.empty:
 else:
     st.info("ไม่มีข้อมูลสัญญาในตลาดนี้")
 
-# เพิ่มระยะห่างระหว่างตารางและกราฟ Payoff
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 1: Payoff ณ วันหมดอายุ (พร้อม Spot Price ด้านบน, จุดคุ้มทุน และแสดงกำไรขาดทุน ณ จุด Spot)
+# กราฟที่ 1: Payoff ณ วันหมดอายุ (พร้อม Spot Price ด้านบน, จุดคุ้มทุน และกำไร/ขาดทุน ณ Spot)
 # ==========================================
 st.subheader(f"📈 1. Payoff รวม ณ วันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วยแสดงผล", ["บาทรวม (THB)", "จุด (Points)"])
@@ -551,10 +577,8 @@ if not market_trades.empty:
             hovertemplate=f"<b>{row['Strategy']}</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
         ))
 
-# คำนวณ P&L ณ ราคา Spot ปัจจุบัน บนเส้น Net Payoff
 spot_pnl_at_expiry = np.interp(spot_price, price_range, total_payoff)
 
-# เพิ่มกราฟ Net Payoff พร้อมแยกสีพื้นที่ใต้กราฟ
 fig.add_trace(go.Scatter(
     x=price_range, y=total_payoff,
     mode='lines',
@@ -565,7 +589,6 @@ fig.add_trace(go.Scatter(
     hovertemplate="<b>Net Portfolio</b><br>Price: %{x:.2f}<br>Total P&L: %{y:,.2f}<extra></extra>"
 ))
 
-# โซนสีแดงใต้เส้น 0 (ขาดทุน)
 fig.add_trace(go.Scatter(
     x=price_range,
     y=np.where(total_payoff < 0, total_payoff, 0),
@@ -577,7 +600,6 @@ fig.add_trace(go.Scatter(
     hoverinfo='skip'
 ))
 
-# คำนวณหาจุดคุ้มทุน (Break-even points)
 be_points = []
 for j in range(len(price_range) - 1):
     if total_payoff[j] * total_payoff[j+1] < 0:
@@ -603,7 +625,6 @@ if be_points:
 fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 fig.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
 
-# แสดงป้ายราคาอ้างอิงและบอกกำไร/ขาดทุนตรงจุดนั้น
 pnl_status_str = f"กำไร: +{spot_pnl_at_expiry:,.2f}" if spot_pnl_at_expiry >= 0 else f"ขาดทุน: {spot_pnl_at_expiry:,.2f}"
 fig.add_annotation(
     x=spot_price,
@@ -630,7 +651,6 @@ fig.update_layout(
 
 st.plotly_chart(fig, use_container_width=True)
 
-# เพิ่มระยะห่างระหว่างกราฟและคำอธิบายส่วนถัดไป
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
@@ -651,7 +671,6 @@ if not market_trades.empty:
         unique_trade_dates.append(sim_date_str)
         unique_trade_dates = sorted(unique_trade_dates)
 
-    # กราฟที่ 2.1: เฉพาะสัญญาที่เทรดในวันนั้นๆ
     for i, t_date_str in enumerate(unique_trade_dates):
         try:
             t_d = datetime.strptime(t_date_str, "%Y-%m-%d").date()
@@ -724,7 +743,6 @@ if not market_trades.empty:
                     hoverinfo='skip'
                 ))
 
-    # กราฟที่ 2.2: แบบสะสมยอดรวมถึงวันที่เลือก
     for i, t_date_str in enumerate(unique_trade_dates):
         if t_date_str > sim_date_str:
             continue
@@ -825,10 +843,8 @@ fig_daily_cumulative.update_layout(
 st.plotly_chart(fig_daily_single, use_container_width=True)
 st.plotly_chart(fig_daily_cumulative, use_container_width=True)
 
-# เพิ่มระยะห่างก่อนแสดงตารางข้อมูลวันที่เลือก
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- เพิ่มตารางข้อมูลการเทรดในวันที่เลือกจำลอง ---
 st.markdown(f"### 📋 รายการเทรดที่นำมาคำนวณในวันที่เลือก (`{sim_date_str}` และสะสมก่อนหน้า)")
 if not market_trades.empty:
     filtered_sim_trades = market_trades[market_trades["TradeDate"].astype(str) <= sim_date_str]
@@ -840,7 +856,6 @@ if not market_trades.empty:
 else:
     st.info("ไม่มีข้อมูลการเทรดในพอร์ต")
 
-# เพิ่มระยะห่างก่อนเข้าส่วน Greeks
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================

@@ -460,75 +460,45 @@ if not combined_trades_df.empty and "Market" in combined_trades_df.columns:
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ==========================================
-# ตารางสรุป P&L (ณ ปัจจุบัน - แก้ไขใช้ T ตาม ExpiryDate จริง)
+# ตารางสรุป P&L (ณ ปัจจุบัน - ซิงค์สูตรให้ตรงกับกราฟ Payoff 100%)
 # ==========================================
 st.subheader("📊 ตารางสรุปสถานะและ P&L ณ ราคาอ้างอิงปัจจุบัน")
 if not market_trades.empty:
     summary_list = []
-    grouped = market_trades.groupby(["Source_Portfolio", "Series", "Strike", "Type"])
-    for key, group in grouped:
-        p_src, ser, stk, p_type = key
-        open_qty = group[group["Status"] == "Open"]["Contracts"].sum()
-        close_qty = group[group["Status"] == "Close"]["Contracts"].sum()
-        net_qty = open_qty - close_qty
+    for idx, row in market_trades.iterrows():
+        p_src = row.get("Source_Portfolio", active_portfolio)
+        ser = row["Series"]
+        stk = float(row["Strike"])
+        p_type = row["Type"]
+        status = row["Status"]
+        qty = int(row["Contracts"])
+        prem = float(row["Premium"])
+        comm = float(row["Commission"]) * qty
         
-        signed_net_contracts = 0
-        for _, r_row in group.iterrows():
-            r_qty = int(r_row["Contracts"])
-            r_stat = r_row["Status"]
-            dir_factor = 1 if r_stat == "Open" else -1
-            if "Long" in r_row["Type"]:
-                signed_net_contracts += r_qty * dir_factor
-            elif "Short" in r_row["Type"]:
-                signed_net_contracts -= r_qty * dir_factor
-            else:
-                if "Long" in r_row["Type"]:
-                    signed_net_contracts += r_qty * dir_factor
-                else:
-                    signed_net_contracts -= r_qty * dir_factor
-
+        sign_multiplier = 1 if status == "Open" else -1
+        mult_qty = qty * contract_multiplier * sign_multiplier
+        
         item_pnl = 0
-        mult_qty = contract_multiplier
-        for _, r_row in group.iterrows():
-            r_stk = float(r_row["Strike"])
-            r_prem = float(r_row["Premium"])
-            r_qty = int(r_row["Contracts"])
-            r_comm = float(r_row["Commission"]) * r_qty
-            r_stat = r_row["Status"]
-            dir_factor = 1 if r_stat == "Open" else -1
-            
-            # คำนวณ Time to Expiry (T) ให้ตรงกับ ExpiryDate จริง ไม่ใช้ 30 วันตายตัว
-            try:
-                exp_d = datetime.strptime(str(r_row["ExpiryDate"]), "%Y-%m-%d").date()
-                rem_days = (exp_d - date.today()).days
-                T_val = max(rem_days, 0) / 365.0
-            except:
-                T_val = 30 / 365.0
-            
-            if r_row["Type"] == "Long Futures":
-                item_pnl += (spot_price - r_stk) * r_qty * mult_qty * dir_factor - r_comm
-            elif r_row["Type"] == "Short Futures":
-                item_pnl += (r_stk - spot_price) * r_qty * mult_qty * dir_factor - r_comm
-            elif "Call" in r_row["Type"]:
-                curr_opt_val = bs_option_price(spot_price, r_stk, T_val, risk_free_rate, volatility_input, "Call")
-                if "Long" in r_row["Type"]:
-                    item_pnl += (curr_opt_val - r_prem) * r_qty * mult_qty * dir_factor - r_comm
-                else:
-                    item_pnl += (r_prem - curr_opt_val) * r_qty * mult_qty * dir_factor - r_comm
-            elif "Put" in r_row["Type"]:
-                curr_opt_val = bs_option_price(spot_price, r_stk, T_val, risk_free_rate, volatility_input, "Put")
-                if "Long" in r_row["Type"]:
-                    item_pnl += (curr_opt_val - r_prem) * r_qty * mult_qty * dir_factor - r_comm
-                else:
-                    item_pnl += (r_prem - curr_opt_val) * r_qty * mult_qty * dir_factor - r_comm
+        if p_type == "Long Futures":
+            item_pnl = (spot_price - stk) * mult_qty - comm
+        elif p_type == "Short Futures":
+            item_pnl = (stk - spot_price) * mult_qty - comm
+        elif p_type == "Long Call Option":
+            item_pnl = (np.maximum(0, spot_price - stk) - prem) * mult_qty - comm
+        elif p_type == "Short Call Option":
+            item_pnl = (prem - np.maximum(0, spot_price - stk)) * mult_qty - comm
+        elif p_type == "Long Put Option":
+            item_pnl = (np.maximum(0, stk - spot_price) - prem) * mult_qty - comm
+        elif p_type == "Short Put Option":
+            item_pnl = (prem - np.maximum(0, stk - spot_price)) * mult_qty - comm
 
         summary_list.append({
             "Portfolio": p_src,
             "Series": ser,
             "Strike": stk,
             "Type": p_type,
-            "Open Qty": open_qty,
-            "Net Qty (Contracts)": net_qty,
+            "Status": status,
+            "Net Qty": qty * sign_multiplier,
             "Current P&L (THB)": round(item_pnl, 2)
         })
     
@@ -536,14 +506,14 @@ if not market_trades.empty:
     
     if not summary_df.empty:
         total_pnl_sum = summary_df["Current P&L (THB)"].sum()
-        total_net_qty = summary_df["Net Qty (Contracts)"].sum()
+        total_net_qty = summary_df["Net Qty"].sum()
         summary_row = pd.DataFrame([{
             "Portfolio": "📌 TOTAL SUM",
             "Series": "-",
             "Strike": "-",
             "Type": "-",
-            "Open Qty": summary_df["Open Qty"].sum(),
-            "Net Qty (Contracts)": total_net_qty,
+            "Status": "-",
+            "Net Qty": total_net_qty,
             "Current P&L (THB)": round(total_pnl_sum, 2)
         }])
         summary_df = pd.concat([summary_df, summary_row], ignore_index=True)

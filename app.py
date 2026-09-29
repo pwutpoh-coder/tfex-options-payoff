@@ -1,14 +1,11 @@
 import numpy as np
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="TFEX Options Payoff Calculator", layout="wide")
 
 st.title("📈 TFEX Options Strategy Payoff & P&L Calculator")
-st.markdown(
-    "ระบบคำนวณกราฟ Payoff และตารางสรุปกำไร/ขาดทุนอ้างอิงจากสูตรเดียวกัน"
-)
+st.markdown("ระบบคำนวณกราฟ Payoff และตารางสรุปกำไร/ขาดทุน")
 
 # 1. Sidebar สำหรับตั้งค่าพารามิเตอร์หลัก
 st.sidebar.header("⚙️ ตั้งค่าตลาดและสัญญา")
@@ -61,7 +58,7 @@ for i in range(int(num_legs)):
   })
 
 
-# 2. ฟังก์ชันกลางสำหรับคำนวณกำไร/ขาดทุนของแต่ละเลก (ใช้ร่วมกันทั้งกราฟและตาราง)
+# 2. ฟังก์ชันกลางสำหรับคำนวณกำไร/ขาดทุนของแต่ละเลก
 def calculate_leg_pnl(leg, s_val, mult):
   pos = leg["position"]
   opt_type = leg["type"]
@@ -69,18 +66,14 @@ def calculate_leg_pnl(leg, s_val, mult):
   premium = leg["premium"]
   qty = leg["qty"]
 
-  # คำนวณมูลค่า Intrinsic Value ตามประเภทออปชัน
   if opt_type == "Call":
     intrinsic = np.maximum(0, s_val - strike)
-  else:  # Put
+  else:
     intrinsic = np.maximum(0, strike - s_val)
 
-  # คำนวณกำไร/ขาดทุนสุทธิ (บาท)
   if "Long" in pos:
-    # ซื้อ: (มูลค่าปัจจุบัน - ต้นทุนพรีเมียม) * ตัวคูณ * จำนวนสัญญา
     pnl = (intrinsic - premium) * mult * qty
   else:
-    # ขาย: (พรีเมียมที่ได้รับ - มูลค่าปัจจุบัน) * ตัวคูณ * จำนวนสัญญา
     pnl = (premium - intrinsic) * mult * qty
 
   return pnl
@@ -88,14 +81,17 @@ def calculate_leg_pnl(leg, s_val, mult):
 
 # 3. คำนวณเส้น Payoff รวมตลอดช่วงราคา
 total_payoff = np.zeros_like(prices)
-leg_payoffs = []
+chart_data = {"Underlying Price": prices}
 
-for leg in legs:
+for idx, leg in enumerate(legs):
   l_pnl = np.array([calculate_leg_pnl(leg, p, multiplier) for p in prices])
-  leg_payoffs.append(l_pnl)
+  chart_data[f"Leg {idx+1}"] = l_pnl
   total_payoff += l_pnl
 
-# 4. คำนวณกำไร/ขาดทุน ณ ราคาอ้างอิงปัจจุบัน (Spot Current) โดยใช้ฟังก์ชันกลางตัวเดียวกัน
+chart_data["Total Strategy Payoff"] = total_payoff
+df_chart = pd.DataFrame(chart_data).set_index("Underlying Price")
+
+# 4. คำนวณกำไร/ขาดทุน ณ ราคาอ้างอิงปัจจุบัน (Spot Current)
 current_total_pnl = 0
 summary_data = []
 
@@ -132,37 +128,5 @@ st.dataframe(df_summary, use_container_width=True)
 
 st.markdown("---")
 st.subheader("📈 กราฟ Payoff Profile ของกลยุทธ์")
+st.line_chart(df_chart)
 
-fig, ax = plt.subplots(figsize=(10, 5))
-ax.plot(
-    prices,
-    total_payoff,
-    label="Total Strategy Payoff",
-    color="darkblue",
-    linewidth=2.5,
-)
-
-for idx, l_pnl in enumerate(leg_payoffs):
-  ax.plot(
-      prices,
-      l_pnl,
-      linestyle="--",
-      alpha=0.7,
-      label=f"Leg {idx+1} ({legs[idx]['position']} {legs[idx]['type']} K={legs[idx]['strike']})",
-  )
-
-ax.axhline(0, color="black", linewidth=1, linestyle="--")
-ax.axvline(
-    spot_current,
-    color="red",
-    linestyle=":",
-    linewidth=2,
-    label=f"Current Spot ({spot_current})",
-)
-ax.set_title("Strategy Payoff Diagram")
-ax.set_xlabel("Underlying Price")
-ax.set_ylabel("Profit / Loss (THB)")
-ax.grid(True, linestyle=":", alpha=0.6)
-ax.legend(loc="best")
-
-st.pyplot(fig)

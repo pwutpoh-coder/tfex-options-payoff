@@ -215,13 +215,17 @@ st.title("📈 TFEX Multi-Asset Options & Futures Pro")
 st.markdown("ระบบวิเคราะห์ Payoff Chart รองรับ Multi-Portfolio, ซีรีส์มาตรฐาน, บันทึกวันที่ซื้อขาย และเหมาะสำหรับมือถือ")
 
 # --- แถบ Sidebar จัดการพอร์ตและตลาด ---
-st.sidebar.header("📁 จัดการพอร์ตเทรด")
+st.sidebar.header("📁 จัดการพอร์ตเทรด (ชีทพอร์ต)")
 available_portfolios = get_available_portfolios()
 
-active_portfolio = st.sidebar.selectbox("เลือกพอร์ตหลัก", available_portfolios)
+# จัดการเลือกพอร์ตหลัก หรือสร้างชีทพอร์ตใหม่ทันที
+selected_portfolio_tab = st.sidebar.selectbox("เลือกแฟ้มพอร์ตปัจจุบัน", available_portfolios)
+active_portfolio = selected_portfolio_tab
 
-new_port_name = st.sidebar.text_input("ชื่อพอร์ตใหม่ (เช่น portfolio_4.csv)")
-if st.sidebar.button("➕ สร้างพอร์ตใหม่"):
+st.sidebar.markdown("---")
+st.sidebar.subheader("➕ สร้างแฟ้มพอร์ตใหม่ (เพิ่มชีท)")
+new_port_name = st.sidebar.text_input("ชื่อไฟล์พอร์ตใหม่ (เช่น portfolio_4.csv)")
+if st.sidebar.button("สร้างและเปิดใช้งานพอร์ตใหม่"):
     if new_port_name:
         if not new_port_name.endswith(".csv"):
             new_port_name += ".csv"
@@ -232,13 +236,14 @@ if st.sidebar.button("➕ สร้างพอร์ตใหม่"):
             ])
             empty_df.to_csv(new_port_name, index=False)
             st.sidebar.success(f"สร้างพอร์ต {new_port_name} สำเร็จ!")
+            active_portfolio = new_port_name
             st.rerun()
         else:
-            st.sidebar.warning("ชื่อพอร์ตนี้มีอยู่แล้ว")
+            st.sidebar.warning("ชื่อพอร์ตนี้มีอยู่แล้วในระบบ")
 
 # แสดงสถานะไฟล์บันทึกการเทรดทั้งหมดใน Sidebar
 st.sidebar.markdown("---")
-st.sidebar.subheader("📂 ไฟล์บันทึกการเทรดทั้งหมด")
+st.sidebar.subheader("📂 สรุปไฟล์บันทึกการเทรดทั้งหมด")
 portfolio_summary_df = get_portfolio_summary()
 st.sidebar.dataframe(portfolio_summary_df, use_container_width=True, hide_index=True)
 
@@ -293,9 +298,13 @@ for yr in [short_year, next_short_year]:
     for m in month_codes:
         generated_series_options.append(f"{prefix_code}{m}{yr}")
 
-# --- ฟอร์มเพิ่มรายการเทรด (พร้อมระบบยืนยันป้องกันข้อมูลซ้ำ) ---
-st.sidebar.subheader(f"➕ เพิ่มสัญญาใหม่ ({active_portfolio})")
-with st.sidebar.form("trade_form"):
+# --- ฟอร์มเพิ่มรายการเทรด (รีเซ็ตปุ่มติ๊กยืนยันอัตโนมัติเมื่อกดส่งข้อมูลสำเร็จ) ---
+st.sidebar.subheader(f"➕ เพิ่มสัญญาใหม่เข้าพอร์ต: `{active_portfolio}`")
+
+if "form_submitted_key" not in st.session_state:
+    st.session_state["form_submitted_key"] = 0
+
+with st.sidebar.form(key=f"trade_form_{st.session_state['form_submitted_key']}"):
     strategy_name = st.text_input("ชื่อกลยุทธ์ / Note", "Strategy #1")
     
     series_mode = st.radio("เลือกซีรีส์", ["Dropdown มาตรฐาน", "พิมพ์เอง"])
@@ -362,6 +371,8 @@ with st.sidebar.form("trade_form"):
             trades_df = pd.concat([trades_df, new_row], ignore_index=True)
             save_trades_to_file(trades_df, active_portfolio)
             st.sidebar.success("บันทึกสำเร็จและจัดเก็บลงประวัติถาวรเรียบร้อย!")
+            # เพิ่มค่า key เพื่อรีเซ็ตสถานะฟอร์มและเอาติ๊กออกไม่ให้ค้าง
+            st.session_state["form_submitted_key"] += 1
             st.rerun()
 
 # ==========================================
@@ -454,9 +465,9 @@ if not combined_trades_df.empty and "Market" in combined_trades_df.columns:
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ==========================================
-# ตารางสรุป P&L
+# ตารางสรุป P&L (ณ ปัจจุบัน พร้อมคอลัมน์ Net Contracts และแถวสรุปผลรวม)
 # ==========================================
-st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน")
+st.subheader("📊 ตารางสรุปสถานะและ P&L ณ ราคาอ้างอิงปัจจุบัน")
 if not market_trades.empty:
     summary_list = []
     grouped = market_trades.groupby(["Source_Portfolio", "Series", "Strike", "Type"])
@@ -466,6 +477,22 @@ if not market_trades.empty:
         close_qty = group[group["Status"] == "Close"]["Contracts"].sum()
         net_qty = open_qty - close_qty
         
+        # คํานวณ Net สัญญาคูณทิศทาง (Long ให้บวก, Short ให้ลบ สำหรับดูทิศทางพอร์ตเน็ตสุทธิ)
+        signed_net_contracts = 0
+        for _, r_row in group.iterrows():
+            r_qty = int(r_row["Contracts"])
+            r_stat = r_row["Status"]
+            dir_factor = 1 if r_stat == "Open" else -1
+            if "Long" in r_row["Type"]:
+                signed_net_contracts += r_qty * dir_factor
+            elif "Short" in r_row["Type"]:
+                signed_net_contracts -= r_qty * dir_factor
+            else: # Futures
+                if "Long" in r_row["Type"]:
+                    signed_net_contracts += r_qty * dir_factor
+                else:
+                    signed_net_contracts -= r_qty * dir_factor
+
         item_pnl = 0
         mult_qty = contract_multiplier
         for _, r_row in group.iterrows():
@@ -499,20 +526,38 @@ if not market_trades.empty:
             "Strike": stk,
             "Type": p_type,
             "Open Qty": open_qty,
-            "Net Qty": net_qty,
+            "Net Qty (Contracts)": net_qty,
             "Current P&L (THB)": round(item_pnl, 2)
         })
-    st.dataframe(pd.DataFrame(summary_list), use_container_width=True)
+    
+    summary_df = pd.DataFrame(summary_list)
+    
+    # เพิ่มบรรทัดสรุปผลรวม (Total Summary Row) ในตาราง
+    if not summary_df.empty:
+        total_pnl_sum = summary_df["Current P&L (THB)"].sum()
+        total_net_qty = summary_df["Net Qty (Contracts)"].sum()
+        summary_row = pd.DataFrame([{
+            "Portfolio": "📌 TOTAL SUM",
+            "Series": "-",
+            "Strike": "-",
+            "Type": "-",
+            "Open Qty": summary_df["Open Qty"].sum(),
+            "Net Qty (Contracts)": total_net_qty,
+            "Current P&L (THB)": round(total_pnl_sum, 2)
+        }])
+        summary_df = pd.concat([summary_df, summary_row], ignore_index=True)
+
+    st.dataframe(summary_df, use_container_width=True)
 else:
     st.info("ไม่มีข้อมูลสัญญาในตลาดนี้")
 
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 1: Payoff ณ วันหมดอายุ (พร้อม Spot Price ด้านบน, จุดคุ้มทุน และกำไร/ขาดทุน ณ Spot)
+# กราฟที่ 1: Payoff ณ วันหมดอายุ (ไม่มีลูกศรที่เส้น Spot และเว้นระยะห่างข้อความไม่ให้ทับกัน)
 # ==========================================
 st.subheader(f"📈 1. Payoff รวม ณ วันหมดอายุ ({selected_market})")
-payoff_mode = st.selectbox("หน่วยแสดงผล", ["บาทรวม (THB)", "จุด (Points)"])
+payoff_mode = st.selectbox("หน่วยแสดงผลกราฟ Payoff", ["บาทรวม (THB)", "จุด (Points)"])
 
 price_range = np.linspace(spot_price * 0.85, spot_price * 1.15, 300)
 total_payoff = np.zeros_like(price_range)
@@ -618,7 +663,7 @@ if be_points:
         name='Break-even (จุดคุ้มทุน)',
         marker=dict(color='orange', size=10, symbol='diamond'),
         text=[f"BE: {bp:.2f}" for bp in be_points],
-        textposition="top center",
+        textposition="bottom center", # ปรับตำแหน่งข้อความ Break-even ให้อยู่ด้านล่างจุด ไม่ให้ทับซ้อนด้านบน
         hovertemplate="<b>Break-even</b><br>Price: %{x:.2f}<extra></extra>"
     ))
 
@@ -626,17 +671,21 @@ fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 fig.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
 
 pnl_status_str = f"กำไร: +{spot_pnl_at_expiry:,.2f}" if spot_pnl_at_expiry >= 0 else f"ขาดทุน: {spot_pnl_at_expiry:,.2f}"
+
+# วางข้อความ Spot ปรับตำแหน่งให้อยู่ด้านบนสุดของกรอบกราฟโดยไม่มีหัวลูกศรเกะกะ เพื่อป้องกันการทับซ้อน
 fig.add_annotation(
     x=spot_price,
-    y=1.0,
+    y=0.95,
     yref="paper",
     text=f"Spot: {spot_price:,.2f} ({pnl_status_str})",
-    showarrow=True,
-    arrowhead=2,
-    arrowcolor="red",
-    font=dict(color="red", size=12, family="sans-serif"),
+    showarrow=False, # เอาลูกศรออกตามต้องการ
+    font=dict(color="red", size=13, family="sans-serif"),
     xanchor="center",
-    yanchor="bottom"
+    yanchor="top",
+    bgcolor="rgba(255, 255, 255, 0.85)",
+    bordercolor="red",
+    borderwidth=1,
+    borderpad=4
 )
 
 fig.update_layout(
@@ -645,8 +694,8 @@ fig.update_layout(
     yaxis_title=f"P&L ({payoff_mode})",
     hovermode="x unified",
     template="plotly_white",
-    height=480,
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    height=520, # ขยายความสูงกราฟเพิ่มพื้นที่ว่าง
+    legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
 )
 
 st.plotly_chart(fig, use_container_width=True)
@@ -817,27 +866,29 @@ if not market_trades.empty:
 fig_daily_single.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 fig_daily_single.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
 fig_daily_single.add_annotation(
-    x=spot_price, y=1.0, yref="paper", text=f"{spot_price:,.2f}",
-    showarrow=False, font=dict(color="red", size=12), xanchor="center", yanchor="bottom"
+    x=spot_price, y=0.95, yref="paper", text=f"{spot_price:,.2f}",
+    showarrow=False, font=dict(color="red", size=12), xanchor="center", yanchor="top",
+    bgcolor="rgba(255, 255, 255, 0.85)"
 )
 fig_daily_single.update_layout(
     title="กราฟเฉพาะวันที่เทรด (Trades on Specific Date)",
     xaxis_title="Underlying Price", yaxis_title=f"Value ({payoff_mode})",
-    hovermode="x unified", template="plotly_white", height=400,
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    hovermode="x unified", template="plotly_white", height=420,
+    legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
 )
 
 fig_daily_cumulative.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
 fig_daily_cumulative.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
 fig_daily_cumulative.add_annotation(
-    x=spot_price, y=1.0, yref="paper", text=f"{spot_price:,.2f}",
-    showarrow=False, font=dict(color="red", size=12), xanchor="center", yanchor="bottom"
+    x=spot_price, y=0.95, yref="paper", text=f"{spot_price:,.2f}",
+    showarrow=False, font=dict(color="red", size=12), xanchor="center", yanchor="top",
+    bgcolor="rgba(255, 255, 255, 0.85)"
 )
 fig_daily_cumulative.update_layout(
     title="กราฟสะสมยอดรวมถึงวันที่เลือก (Cumulative Portfolio Value)",
     xaxis_title="Underlying Price", yaxis_title=f"Value ({payoff_mode})",
-    hovermode="x unified", template="plotly_white", height=400,
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    hovermode="x unified", template="plotly_white", height=420,
+    legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
 )
 
 st.plotly_chart(fig_daily_single, use_container_width=True)

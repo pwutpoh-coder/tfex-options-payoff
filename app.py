@@ -240,7 +240,7 @@ def bs_greeks(S, K, T, r, sigma, option_type):
 
 # --- UI หลัก ---
 st.title("📈 TFEX Multi-Asset Options & Futures Pro")
-st.markdown("ระบบวิเคราะห์ Payoff Chart รองรับ Multi-Portfolio, ซีรีส์มาตรฐาน, บันทึกวันที่ซื้อขาย, บันทึกประวัติสถานการณ์พอร์ต และสรุป Max-Min/จุดคุ้มทุนอัตโนมัติ")
+st.markdown("ระบบวิเคราะห์ Payoff Chart รองรับ Multi-Portfolio, ซีรีส์มาตรฐาน, บันทึกวันที่ซื้อขาย และสรุปความเสี่ยง Max/Min P&L ขอบซ้ายขวาอย่างละเอียด")
 
 # --- แถบ Sidebar จัดการพอร์ตและตลาด ---
 st.sidebar.header("📁 จัดการพอร์ตเทรด (ชีทพอร์ต)")
@@ -583,7 +583,7 @@ else:
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 1: Payoff ณ วันหมดอายุ
+# กราฟที่ 1: Payoff ณ วันหมดอายุ และสรุปสถิติความเสี่ยง
 # ==========================================
 st.subheader(f"📈 1. Payoff รวม ณ วันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วยแสดงผลกราฟ Payoff", ["บาทรวม (THB)", "จุด (Points)"])
@@ -651,14 +651,7 @@ if not market_trades.empty:
             hovertemplate=f"<b>{row['Strategy']}</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
         ))
 
-spot_pnl_at_expiry = np.interp(spot_price, price_range, total_payoff)
-
-# --- คำนวณสรุป Max, Min และ จุดคุ้มทุน (Break-even) ตามช่วงราคาที่เลือก ---
-max_profit = np.max(total_payoff)
-max_profit_spot = price_range[np.argmax(total_payoff)]
-max_loss = np.min(total_payoff)
-max_loss_spot = price_range[np.argmin(total_payoff)]
-
+# คำนวณจุดคุ้มทุน (Break-even points)
 be_points = []
 for j in range(len(price_range) - 1):
     if total_payoff[j] * total_payoff[j+1] < 0:
@@ -668,13 +661,34 @@ for j in range(len(price_range) - 1):
             x_be = x1 - y1 * (x2 - x1) / (y2 - y1)
             be_points.append(x_be)
 
-# แสดงกล่องสรุป Max-Min และจุดคุ้มทุนให้เห็นเด่นชัด
-unit_label = "บาท (THB)" if payoff_mode == "บาทรวม (THB)" else "จุด (Points)"
-m_col1, m_col2, m_col3 = st.columns(3)
-m_col1.metric("🟢 กำไรสูงสุด (Max Profit)", f"{max_profit:,.2f} {unit_label}", f"ที่ Spot: {max_profit_spot:,.2f}")
-m_col2.metric("🔴 ขาดทุนสูงสุด (Max Loss)", f"{max_loss:,.2f} {unit_label}", f"ที่ Spot: {max_loss_spot:,.2f}")
-be_str = ", ".join([f"{bp:,.2f}" for bp in be_points]) if be_points else "ไม่มีจุดตัดในช่วงนี้"
-m_col3.metric("⚖️ จุดคุ้มทุน (Break-even)", be_str)
+# คำนวณสถิติ Max, Min, Left, Right
+max_idx = np.argmax(total_payoff)
+min_idx = np.argmin(total_payoff)
+max_pnl_val = total_payoff[max_idx]
+price_at_max = price_range[max_idx]
+min_pnl_val = total_payoff[min_idx]
+price_at_min = price_range[min_idx]
+
+left_pnl = total_payoff[0]
+left_price = price_range[0]
+right_pnl = total_payoff[-1]
+right_price = price_range[-1]
+
+unit_label = "บาท" if payoff_mode == "บาทรวม (THB)" else "จุด"
+
+# --- กล่องแสดงสรุป Max-Min และความเสี่ยงซ้ายขวา ---
+st.markdown("#### 🎯 สรุปผลกำไร-ขาดทุนเชิงลึก (Max / Min & Risk Boundaries)")
+sc1, sc2, sc3, sc4 = st.columns(4)
+sc1.metric("🟢 กำไรสูงสุด (Max P&L)", f"{max_pnl_val:,.2f} {unit_label}", delta=f"ที่ราคาอ้างอิง: {price_at_max:,.2f}")
+sc2.metric("🔴 ขาดทุนสูงสุด (Min P&L)", f"{min_pnl_val:,.2f} {unit_label}", delta=f"ที่ราคาอ้างอิง: {price_at_min:,.2f}", delta_color="inverse")
+sc3.metric("📉 ขาดทุน/กำไรฝั่งซ้ายสุด", f"{left_pnl:,.2f} {unit_label}", delta=f"ที่ราคา: {left_price:,.2f}", delta_color="off")
+sc4.metric("📈 ขาดทุน/กำไรฝั่งขวาสุด", f"{right_pnl:,.2f} {unit_label}", delta=f"ที่ราคา: {right_price:,.2f}", delta_color="off")
+
+be_str = ", ".join([f"`{bp:,.2f}`" for bp in be_points]) if be_points else "ไม่มีจุดคุ้มทุนในช่วงนี้ (หรือกำไร/ขาดทุนตลอดช่วง)"
+st.markdown(f"💡 **จุดคุ้มทุน (Break-even Points) ในช่วงกราฟนี้:** {be_str}")
+st.markdown("---")
+
+spot_pnl_at_expiry = np.interp(spot_price, price_range, total_payoff)
 
 fig.add_trace(go.Scatter(
     x=price_range, y=total_payoff,

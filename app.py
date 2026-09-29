@@ -604,6 +604,9 @@ if not market_trades.empty:
         status = row["Status"]
         sign_multiplier = 1 if status == "Open" else -1
         
+        # คำนวณค่าคอมมิชชันตามหน่วยแสดงผล (หักออกไปแล้วจาก Payoff)
+        comm_val = (float(row["Commission"]) * qty) if payoff_mode == "บาทรวม (THB)" else ((float(row["Commission"]) * qty) / contract_multiplier)
+        
         try:
             exp_d = datetime.strptime(str(row["ExpiryDate"]), "%Y-%m-%d").date()
             days_to_expiry = (exp_d - today).days
@@ -615,17 +618,17 @@ if not market_trades.empty:
         payoff = np.zeros_like(price_range)
         
         if p_type == "Long Futures":
-            payoff = (price_range - stk) * mult_qty
+            payoff = (price_range - stk) * mult_qty - comm_val
         elif p_type == "Short Futures":
-            payoff = (stk - price_range) * mult_qty
+            payoff = (stk - price_range) * mult_qty - comm_val
         elif p_type == "Long Call Option":
-            payoff = (np.maximum(0, price_range - stk) - prem) * mult_qty
+            payoff = (np.maximum(0, price_range - stk) - prem) * mult_qty - comm_val
         elif p_type == "Short Call Option":
-            payoff = (prem - np.maximum(0, price_range - stk)) * mult_qty
+            payoff = (prem - np.maximum(0, price_range - stk)) * mult_qty - comm_val
         elif p_type == "Long Put Option":
-            payoff = (np.maximum(0, stk - price_range) - prem) * mult_qty
+            payoff = (np.maximum(0, stk - price_range) - prem) * mult_qty - comm_val
         elif p_type == "Short Put Option":
-            payoff = (prem - np.maximum(0, stk - price_range)) * mult_qty
+            payoff = (prem - np.maximum(0, stk - price_range)) * mult_qty - comm_val
             
         total_payoff += payoff
         
@@ -648,7 +651,7 @@ if not market_trades.empty:
             name=f"{row['Strategy']} ({p_type})",
             line=dict(dash='dash', width=1),
             opacity=0.4,
-            hovertemplate=f"<b>{row['Strategy']}</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
+            hovertemplate=f"<b>{row['Strategy']}</b><br>Price: %{{x:.2f}}<br>P&L (Net Comm): %{{y:,.2f}}<extra></extra>"
         ))
 
 # คำนวณจุดคุ้มทุน (Break-even points)
@@ -676,16 +679,48 @@ right_price = price_range[-1]
 
 unit_label = "บาท" if payoff_mode == "บาทรวม (THB)" else "จุด"
 
-# --- กล่องแสดงสรุป Max-Min และความเสี่ยงซ้ายขวา ---
+# --- กล่องแสดงสรุป Max-Min และความเสี่ยงซ้ายขวา (ปรับขนาดตัวเลขให้เล็กลง) ---
 st.markdown("#### 🎯 สรุปผลกำไร-ขาดทุนเชิงลึก (Max / Min & Risk Boundaries)")
 sc1, sc2, sc3, sc4 = st.columns(4)
-sc1.metric("🟢 กำไรสูงสุด (Max P&L)", f"{max_pnl_val:,.2f} {unit_label}", delta=f"ที่ราคาอ้างอิง: {price_at_max:,.2f}")
-sc2.metric("🔴 ขาดทุนสูงสุด (Min P&L)", f"{min_pnl_val:,.2f} {unit_label}", delta=f"ที่ราคาอ้างอิง: {price_at_min:,.2f}", delta_color="inverse")
-sc3.metric("📉 ขาดทุน/กำไรฝั่งซ้ายสุด", f"{left_pnl:,.2f} {unit_label}", delta=f"ที่ราคา: {left_price:,.2f}", delta_color="off")
-sc4.metric("📈 ขาดทุน/กำไรฝั่งขวาสุด", f"{right_pnl:,.2f} {unit_label}", delta=f"ที่ราคา: {right_price:,.2f}", delta_color="off")
+
+with sc1:
+    st.markdown(f"""
+    <div style="background-color: #f8f9fa; padding: 8px 10px; border-radius: 6px; border: 1px solid #e9ecef;">
+        <div style="font-size: 11px; color: #6c757d; font-weight: 500;">🟢 กำไรสูงสุด (Max P&L)</div>
+        <div style="font-size: 15px; font-weight: bold; color: #28a745; margin: 2px 0;">{max_pnl_val:,.2f} {unit_label}</div>
+        <div style="font-size: 10px; color: #495057;">ที่ราคา: {price_at_max:,.2f}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with sc2:
+    st.markdown(f"""
+    <div style="background-color: #f8f9fa; padding: 8px 10px; border-radius: 6px; border: 1px solid #e9ecef;">
+        <div style="font-size: 11px; color: #6c757d; font-weight: 500;">🔴 ขาดทุนสูงสุด (Min P&L)</div>
+        <div style="font-size: 15px; font-weight: bold; color: #dc3545; margin: 2px 0;">{min_pnl_val:,.2f} {unit_label}</div>
+        <div style="font-size: 10px; color: #495057;">ที่ราคา: {price_at_min:,.2f}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with sc3:
+    st.markdown(f"""
+    <div style="background-color: #f8f9fa; padding: 8px 10px; border-radius: 6px; border: 1px solid #e9ecef;">
+        <div style="font-size: 11px; color: #6c757d; font-weight: 500;">📉 ขาดทุน/กำไรฝั่งซ้ายสุด</div>
+        <div style="font-size: 15px; font-weight: bold; color: #343a40; margin: 2px 0;">{left_pnl:,.2f} {unit_label}</div>
+        <div style="font-size: 10px; color: #495057;">ที่ราคา: {left_price:,.2f}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with sc4:
+    st.markdown(f"""
+    <div style="background-color: #f8f9fa; padding: 8px 10px; border-radius: 6px; border: 1px solid #e9ecef;">
+        <div style="font-size: 11px; color: #6c757d; font-weight: 500;">📈 ขาดทุน/กำไรฝั่งขวาสุด</div>
+        <div style="font-size: 15px; font-weight: bold; color: #343a40; margin: 2px 0;">{right_pnl:,.2f} {unit_label}</div>
+        <div style="font-size: 10px; color: #495057;">ที่ราคา: {right_price:,.2f}</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 be_str = ", ".join([f"`{bp:,.2f}`" for bp in be_points]) if be_points else "ไม่มีจุดคุ้มทุนในช่วงนี้ (หรือกำไร/ขาดทุนตลอดช่วง)"
-st.markdown(f"💡 **จุดคุ้มทุน (Break-even Points) ในช่วงกราฟนี้:** {be_str}")
+st.markdown(f"<br>💡 **จุดคุ้มทุน (Break-even Points - หักค่าคอมฯ แล้ว):** {be_str}", unsafe_allow_html=True)
 st.markdown("---")
 
 spot_pnl_at_expiry = np.interp(spot_price, price_range, total_payoff)
@@ -693,11 +728,11 @@ spot_pnl_at_expiry = np.interp(spot_price, price_range, total_payoff)
 fig.add_trace(go.Scatter(
     x=price_range, y=total_payoff,
     mode='lines',
-    name='Net Portfolio Payoff',
+    name='Net Portfolio Payoff (Net Comm)',
     line=dict(color='blue', width=3),
     fill='tozeroy',
     fillcolor='rgba(0, 123, 255, 0.1)',
-    hovertemplate="<b>Net Portfolio</b><br>Price: %{x:.2f}<br>Total P&L: %{y:,.2f}<extra></extra>"
+    hovertemplate="<b>Net Portfolio</b><br>Price: %{x:.2f}<br>Total P&L (Net Comm): %{y:,.2f}<extra></extra>"
 ))
 
 fig.add_trace(go.Scatter(
@@ -742,7 +777,7 @@ fig.add_annotation(
 
 fig.update_layout(
     title=dict(
-        text=f"Net Expiry Payoff ({payoff_mode})",
+        text=f"Net Expiry Payoff ({payoff_mode} - หักค่าคอมฯ แล้ว)",
         y=0.98,
         x=0.0,
         xanchor='left',
@@ -806,6 +841,9 @@ if not market_trades.empty:
                 sign_multiplier = 1 if status == "Open" else -1
                 mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty) * sign_multiplier
                 
+                # หักค่าคอมมิชชันในการจำลองรายวัน
+                comm_val = (float(row["Commission"]) * qty) if payoff_mode == "บาทรวม (THB)" else ((float(row["Commission"]) * qty) / contract_multiplier)
+                
                 try:
                     exp_d = datetime.strptime(str(row["ExpiryDate"]), "%Y-%m-%d").date()
                     rem_days = (exp_d - t_d).days
@@ -814,23 +852,23 @@ if not market_trades.empty:
                     T_sim = 30 / 365.0
                     
                 if p_type == "Long Futures":
-                    val = (price_range - stk) * mult_qty
+                    val = (price_range - stk) * mult_qty - comm_val
                 elif p_type == "Short Futures":
-                    val = (stk - price_range) * mult_qty
+                    val = (stk - price_range) * mult_qty - comm_val
                 elif "Call" in p_type:
                     opt_values = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Call") for p in price_range])
                     if "Long" in p_type:
-                        val = (opt_values - prem) * mult_qty
+                        val = (opt_values - prem) * mult_qty - comm_val
                     else:
-                        val = (prem - opt_values) * mult_qty
+                        val = (prem - opt_values) * mult_qty - comm_val
                 elif "Put" in p_type:
                     opt_values = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Put") for p in price_range])
                     if "Long" in p_type:
-                        val = (opt_values - prem) * mult_qty
+                        val = (opt_values - prem) * mult_qty - comm_val
                     else:
-                        val = (prem - opt_values) * mult_qty
+                        val = (prem - opt_values) * mult_qty - comm_val
                 else:
-                    val = 0
+                    val = 0 - comm_val
                 day_specific_value += val
                 
         if has_trade_on_day:
@@ -843,7 +881,7 @@ if not market_trades.empty:
                 line=dict(color=line_color, width=3 if is_selected else 1.5, dash='solid' if is_selected else 'dash'),
                 fill='tozeroy' if is_selected else None,
                 fillcolor='rgba(0, 123, 255, 0.08)' if is_selected else None,
-                hovertemplate=f"<b>Date: {t_date_str}</b><br>Price: %{{x:.2f}}<br>Value: %{{y:,.2f}}<extra></extra>"
+                hovertemplate=f"<b>Date: {t_date_str}</b><br>Price: %{{x:.2f}}<br>Value (Net Comm): %{{y:,.2f}}<extra></extra>"
             ))
             if is_selected:
                 fig_daily_single.add_trace(go.Scatter(
@@ -878,6 +916,8 @@ if not market_trades.empty:
                 sign_multiplier = 1 if status == "Open" else -1
                 mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty) * sign_multiplier
                 
+                comm_val = (float(row["Commission"]) * qty) if payoff_mode == "บาทรวม (THB)" else ((float(row["Commission"]) * qty) / contract_multiplier)
+                
                 try:
                     exp_d = datetime.strptime(str(row["ExpiryDate"]), "%Y-%m-%d").date()
                     rem_days = (exp_d - t_d).days
@@ -886,23 +926,23 @@ if not market_trades.empty:
                     T_sim = 30 / 365.0
                     
                 if p_type == "Long Futures":
-                    val = (price_range - stk) * mult_qty
+                    val = (price_range - stk) * mult_qty - comm_val
                 elif p_type == "Short Futures":
-                    val = (stk - price_range) * mult_qty
+                    val = (stk - price_range) * mult_qty - comm_val
                 elif "Call" in p_type:
                     opt_values = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Call") for p in price_range])
                     if "Long" in p_type:
-                        val = (opt_values - prem) * mult_qty
+                        val = (opt_values - prem) * mult_qty - comm_val
                     else:
-                        val = (prem - opt_values) * mult_qty
+                        val = (prem - opt_values) * mult_qty - comm_val
                 elif "Put" in p_type:
                     opt_values = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Put") for p in price_range])
                     if "Long" in p_type:
-                        val = (opt_values - prem) * mult_qty
+                        val = (opt_values - prem) * mult_qty - comm_val
                     else:
-                        val = (prem - opt_values) * mult_qty
+                        val = (prem - opt_values) * mult_qty - comm_val
                 else:
-                    val = 0
+                    val = 0 - comm_val
                 cumulative_portfolio_value += val
                 
         line_color = colors[i % len(colors)]
@@ -914,7 +954,7 @@ if not market_trades.empty:
             line=dict(color=line_color, width=3.5 if is_selected else 1.5, dash='solid' if is_selected else 'dash'),
             fill='tozeroy' if is_selected else None,
             fillcolor='rgba(0, 123, 255, 0.08)' if is_selected else None,
-            hovertemplate=f"<b>Cumulative to {t_date_str}</b><br>Price: %{{x:.2f}}<br>Value: %{{y:,.2f}}<extra></extra>"
+            hovertemplate=f"<b>Cumulative to {t_date_str}</b><br>Price: %{{x:.2f}}<br>Value (Net Comm): %{{y:,.2f}}<extra></extra>"
         ))
         if is_selected:
             fig_daily_cumulative.add_trace(go.Scatter(
@@ -935,7 +975,7 @@ fig_daily_single.add_annotation(
     showarrow=False, font=dict(color="red", size=12), xanchor="center", yanchor="top"
 )
 fig_daily_single.update_layout(
-    title="กราฟเฉพาะวันที่เทรด (Trades on Specific Date)",
+    title="กราฟเฉพาะวันที่เทรด (Trades on Specific Date - หักค่าคอมฯ แล้ว)",
     xaxis_title="Underlying Price", yaxis_title=f"Value ({payoff_mode})",
     hovermode="x unified", template="plotly_white", height=420,
     legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
@@ -948,7 +988,7 @@ fig_daily_cumulative.add_annotation(
     showarrow=False, font=dict(color="red", size=12), xanchor="center", yanchor="top"
 )
 fig_daily_cumulative.update_layout(
-    title="กราฟสะสมยอดรวมถึงวันที่เลือก (Cumulative Portfolio Value)",
+    title="กราฟสะสมยอดรวมถึงวันที่เลือก (Cumulative Portfolio Value - หักค่าคอมฯ แล้ว)",
     xaxis_title="Underlying Price", yaxis_title=f"Value ({payoff_mode})",
     hovermode="x unified", template="plotly_white", height=420,
     legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
@@ -963,7 +1003,7 @@ st.markdown(f"### 📋 รายการเทรดที่นำมาคำ
 if not market_trades.empty:
     filtered_sim_trades = market_trades[market_trades["TradeDate"].astype(str) <= sim_date_str]
     if not filtered_sim_trades.empty:
-        display_cols = ["ID", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "TradeDate", "ExpiryDate"]
+        display_cols = ["ID", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate"]
         st.dataframe(filtered_sim_trades[display_cols], use_container_width=True)
     else:
         st.info(f"ไม่มีรายการเทรดในหรือก่อนวันที่ {sim_date_str}")

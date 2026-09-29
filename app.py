@@ -240,7 +240,7 @@ def bs_greeks(S, K, T, r, sigma, option_type):
 
 # --- UI หลัก ---
 st.title("📈 TFEX Multi-Asset Options & Futures Pro")
-st.markdown("ระบบวิเคราะห์ Payoff Chart รองรับ Multi-Portfolio, ซีรีส์มาตรฐาน, บันทึกวันที่ซื้อขาย และบันทึกประวัติสถานการณ์พอร์ตย้อนหลัง")
+st.markdown("ระบบวิเคราะห์ Payoff Chart รองรับ Multi-Portfolio, ซีรีส์มาตรฐาน, บันทึกวันที่ซื้อขาย, สมุดบันทึกพอร์ต และสรุป Max-Min P&L อัตโนมัติ")
 
 # --- แถบ Sidebar จัดการพอร์ตและตลาด ---
 st.sidebar.header("📁 จัดการพอร์ตเทรด (ชีทพอร์ต)")
@@ -583,9 +583,8 @@ else:
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 1: Payoff ณ วันหมดอายุ
+# คำนวณขอบเขต Payoff และเตรียมข้อมูลสำหรับ Summary Max-Min / Break-even
 # ==========================================
-st.subheader(f"📈 1. Payoff รวม ณ วันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วยแสดงผลกราฟ Payoff", ["บาทรวม (THB)", "จุด (Points)"])
 
 price_range = np.linspace(spot_price * 0.85, spot_price * 1.15, 300)
@@ -593,7 +592,6 @@ total_payoff = np.zeros_like(price_range)
 total_greeks = {"Delta": 0.0, "Gamma": 0.0, "Theta": 0.0, "Vega": 0.0}
 
 today = date.today()
-fig = go.Figure()
 
 if not market_trades.empty:
     for idx, row in market_trades.iterrows():
@@ -642,6 +640,67 @@ if not market_trades.empty:
                 dir_sign = 1 if "Long" in p_type else -1
                 total_greeks["Delta"] += 1.0 * qty * contract_multiplier * dir_sign
 
+# คำนวณหา Break-even points
+be_points = []
+for j in range(len(price_range) - 1):
+    if total_payoff[j] * total_payoff[j+1] < 0:
+        x1, x2 = price_range[j], price_range[j+1]
+        y1, y2 = total_payoff[j], total_payoff[j+1]
+        if y2 - y1 != 0:
+            x_be = x1 - y1 * (x2 - x1) / (y2 - y1)
+            be_points.append(x_be)
+
+# คำนวณ Max / Min ของ P&L ในช่วงราคาที่กำหนด
+max_pnl_val = np.max(total_payoff) if len(total_payoff) > 0 else 0.0
+max_pnl_price = price_range[np.argmax(total_payoff)] if len(total_payoff) > 0 else spot_price
+min_pnl_val = np.min(total_payoff) if len(total_payoff) > 0 else 0.0
+min_pnl_price = price_range[np.argmin(total_payoff)] if len(total_payoff) > 0 else spot_price
+
+# ==========================================
+# แสดงผลสรุป Max-Min P&L และ จุดคุ้มทุนชัดเจน
+# ==========================================
+st.markdown("### 📌 สรุปข้อมูลวิเคราะห์พอร์ต ณ วันหมดอายุ (Max-Min & Break-even)")
+sum_col1, sum_col2, sum_col3 = st.columns(3)
+sum_col1.metric("กำไรสูงสุด (Max Profit)", f"{max_pnl_val:,.2f} THB", f"ที่ราคา Spot: {max_pnl_price:,.2f}")
+sum_col2.metric("ขาดทุนสูงสุด (Max Loss / Min)", f"{min_pnl_val:,.2f} THB", f"ที่ราคา Spot: {min_pnl_price:,.2f}")
+
+be_display_str = ", ".join([f"{bp:,.2f}" for bp in be_points]) if be_points else "ไม่พบจุดคุ้มทุนในกรอบนี้"
+sum_col3.metric("จุดคุ้มทุน (Break-even Points)", be_display_str)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# ==========================================
+# กราฟที่ 1: Payoff ณ วันหมดอายุ
+# ==========================================
+st.subheader(f"📈 1. Payoff รวม ณ วันหมดอายุ ({selected_market})")
+
+fig = go.Figure()
+
+if not market_trades.empty:
+    for idx, row in market_trades.iterrows():
+        p_type = row["Type"]
+        stk = float(row["Strike"])
+        prem = float(row["Premium"])
+        qty = int(row["Contracts"])
+        status = row["Status"]
+        sign_multiplier = 1 if status == "Open" else -1
+        
+        mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty) * sign_multiplier
+        payoff = np.zeros_like(price_range)
+        
+        if p_type == "Long Futures":
+            payoff = (price_range - stk) * mult_qty
+        elif p_type == "Short Futures":
+            payoff = (stk - price_range) * mult_qty
+        elif p_type == "Long Call Option":
+            payoff = (np.maximum(0, price_range - stk) - prem) * mult_qty
+        elif p_type == "Short Call Option":
+            payoff = (prem - np.maximum(0, price_range - stk)) * mult_qty
+        elif p_type == "Long Put Option":
+            payoff = (np.maximum(0, stk - price_range) - prem) * mult_qty
+        elif p_type == "Short Put Option":
+            payoff = (prem - np.maximum(0, stk - price_range)) * mult_qty
+
         fig.add_trace(go.Scatter(
             x=price_range, y=payoff,
             mode='lines',
@@ -673,15 +732,6 @@ fig.add_trace(go.Scatter(
     showlegend=False,
     hoverinfo='skip'
 ))
-
-be_points = []
-for j in range(len(price_range) - 1):
-    if total_payoff[j] * total_payoff[j+1] < 0:
-        x1, x2 = price_range[j], price_range[j+1]
-        y1, y2 = total_payoff[j], total_payoff[j+1]
-        if y2 - y1 != 0:
-            x_be = x1 - y1 * (x2 - x1) / (y2 - y1)
-            be_points.append(x_be)
 
 if be_points:
     be_y = [0] * len(be_points)

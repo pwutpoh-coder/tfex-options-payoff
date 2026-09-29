@@ -123,6 +123,35 @@ def save_trades_to_file(df, file_name):
     updated_arch = pd.concat([df_arch, df_copy], ignore_index=True).drop_duplicates(subset=["PortfolioSource", "ID", "TradeDate", "Strike", "Type"], keep="last")
     updated_arch.to_csv(ARCHIVE_FILE, index=False)
 
+# --- ฟังก์ชันจัดการสมุดบันทึกประจำพอร์ต (Portfolio Journal) ---
+def get_journal_filename(portfolio_name):
+    return f"journal_{portfolio_name}.csv"
+
+def load_journal(portfolio_name):
+    j_file = get_journal_filename(portfolio_name)
+    expected_cols = ["Timestamp", "Title", "SpotPrice", "Volatility", "TotalPnL", "Notes"]
+    if os.path.exists(j_file):
+        df_j = pd.read_csv(j_file)
+        for col in expected_cols:
+            if col not in df_j.columns:
+                df_j[col] = ""
+        return df_j
+    return pd.DataFrame(columns=expected_cols)
+
+def save_journal_entry(portfolio_name, title, spot, vol, pnl, notes):
+    j_file = get_journal_filename(portfolio_name)
+    df_j = load_journal(portfolio_name)
+    new_entry = pd.DataFrame([{
+        "Timestamp": datetime.now(BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+        "Title": title,
+        "SpotPrice": spot,
+        "Volatility": vol,
+        "TotalPnL": pnl,
+        "Notes": notes
+    }])
+    df_j = pd.concat([df_j, new_entry], ignore_index=True)
+    df_j.to_csv(j_file, index=False)
+
 # --- ดึงข้อมูลราคาและคำนวณ Volatility อัตโนมัติจาก Yahoo Finance ---
 @st.cache_data(ttl=10)
 def get_market_data(market_type):
@@ -211,7 +240,7 @@ def bs_greeks(S, K, T, r, sigma, option_type):
 
 # --- UI หลัก ---
 st.title("📈 TFEX Multi-Asset Options & Futures Pro")
-st.markdown("ระบบวิเคราะห์ Payoff Chart รองรับ Multi-Portfolio, ซีรีส์มาตรฐาน, บันทึกวันที่ซื้อขาย และเหมาะสำหรับมือถือ")
+st.markdown("ระบบวิเคราะห์ Payoff Chart รองรับ Multi-Portfolio, ซีรีส์มาตรฐาน, บันทึกวันที่ซื้อขาย และบันทึกประวัติสถานการณ์พอร์ตย้อนหลัง")
 
 # --- แถบ Sidebar จัดการพอร์ตและตลาด ---
 st.sidebar.header("📁 จัดการพอร์ตเทรด (ชีทพอร์ต)")
@@ -460,9 +489,10 @@ if not combined_trades_df.empty and "Market" in combined_trades_df.columns:
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ==========================================
-# ตารางสรุป P&L (ณ ปัจจุบัน - ซิงค์สูตรให้ตรงกับกราฟ Payoff 100%)
+# ตารางสรุป P&L (ณ ปัจจุบัน)
 # ==========================================
 st.subheader("📊 ตารางสรุปสถานะและ P&L ณ ราคาอ้างอิงปัจจุบัน")
+total_pnl_sum = 0.0
 if not market_trades.empty:
     summary_list = []
     for idx, row in market_trades.iterrows():
@@ -521,6 +551,34 @@ if not market_trades.empty:
     st.dataframe(summary_df, use_container_width=True)
 else:
     st.info("ไม่มีข้อมูลสัญญาในตลาดนี้")
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# ==========================================
+# 📝 ระบบสมุดบันทึกประจำพอร์ต (Portfolio Journal & Notes)
+# ==========================================
+st.subheader(f"📝 บันทึกสถานการณ์พอร์ตย้อนหลัง (Portfolio Journal: `{active_portfolio}`)")
+st.markdown("พิมพ์บันทึกมุมมองสถานการณ์ตลาด เหตุการณ์สำคัญ หรือเหตุผลในการปรับพอร์ต ณ ขณะนั้น เพื่อใช้อ่านย้อนหลังในภายหลัง")
+
+with st.form(key="journal_form"):
+    j_title = st.text_input("หัวข้อบันทึก (เช่น ปรับ Short Strangle รอบสัปดาห์ / ตลาดผันผวนหนัก)", value="บันทึกสถานการณ์ตลาดประจำวัน")
+    j_notes = st.text_area("รายละเอียดบันทึก / เหตุผล / แผนการจัดการความเสี่ยง", value="มุมมองตลาดตอนนี้ Spot เคลื่อนไหวในกรอบ ได้ทำการปรับเดลต้าพอร์ตและจดบันทึกไว้...")
+    j_submit = st.form_submit_button("💾 บันทึกลงสมุดบันทึกพอร์ตนี้")
+    if j_submit:
+        save_journal_entry(active_portfolio, j_title, spot_price, volatility_input, total_pnl_sum, j_notes)
+        st.success("บันทึกสถานการณ์ลงสมุดบันทึกพอร์ตสำเร็จ!")
+        st.rerun()
+
+# แสดงรายการบันทึกย้อนหลังของพอร์ตปัจจุบัน
+journal_df = load_journal(active_portfolio)
+if not journal_df.empty:
+    st.markdown("#### 📖 ประวัติบันทึกย้อนหลังในพอร์ตนี้")
+    for idx, row in journal_df.iloc[::-1].iterrows(): # แสดงจากล่าสุดขึ้นก่อน
+        with st.expander(f"📌 [{row['Timestamp']}] {row['Title']} (Spot: {row['SpotPrice']} | P&L: {row['TotalPnL']:,.2f} THB)"):
+            st.markdown(f"**ราคา Spot ตอนบันทึก:** `{row['SpotPrice']}` | **Volatility:** `{float(row['Volatility'])*100:.2f}%` | **P&L รวม:** `{row['TotalPnL']:,.2f} บาท`")
+            st.markdown(f"**บันทึกข้อความ:**\n> {row['Notes']}")
+else:
+    st.info(f"ยังไม่มีบันทึกสถานการณ์ในพอร์ต `{active_portfolio}` สามารถพิมพ์บันทึกแรกด้านบนได้เลยครับ")
 
 st.markdown("<br><br>", unsafe_allow_html=True)
 

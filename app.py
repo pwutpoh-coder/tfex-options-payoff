@@ -35,8 +35,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- ฟังก์ชันจัดการไฟล์พอร์ตหลายพอร์ต และระบบประวัติถาวร (Archive) ---
+# --- ฟังก์ชันจัดการไฟล์พอร์ตหลายพอร์ต และระบบประวัติถาวร (Archive & Backup) ---
 ARCHIVE_FILE = "trade_history_archive.csv"
+BACKUP_DIR = "backup_portfolios"
+
+if not os.path.exists(BACKUP_DIR):
+    os.makedirs(BACKUP_DIR)
 
 def init_archive_file():
     expected_cols = [
@@ -93,7 +97,11 @@ def load_trades_from_file(file_name):
         "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot"
     ]
     if os.path.exists(file_name):
-        df = pd.read_csv(file_name)
+        try:
+            df = pd.read_csv(file_name)
+        except:
+            df = pd.DataFrame(columns=expected_cols)
+            
         for col in expected_cols:
             if col not in df.columns:
                 if col == "Status":
@@ -110,7 +118,14 @@ def load_trades_from_file(file_name):
     return pd.DataFrame(columns=expected_cols)
 
 def save_trades_to_file(df, file_name):
+    # บันทึกไฟล์หลัก
     df.to_csv(file_name, index=False)
+    
+    # สร้าง Backup อัตโนมัติทุกครั้งที่มีการบันทึก
+    backup_path = os.path.join(BACKUP_DIR, f"{file_name}.bak")
+    df.to_csv(backup_path, index=False)
+    
+    # บันทึกลง Archive
     if os.path.exists(ARCHIVE_FILE):
         df_arch = pd.read_csv(ARCHIVE_FILE)
     else:
@@ -131,7 +146,10 @@ def load_journal(portfolio_name):
     j_file = get_journal_filename(portfolio_name)
     expected_cols = ["Timestamp", "Title", "SpotPrice", "Volatility", "TotalPnL", "Notes"]
     if os.path.exists(j_file):
-        df_j = pd.read_csv(j_file)
+        try:
+            df_j = pd.read_csv(j_file)
+        except:
+            df_j = pd.DataFrame(columns=expected_cols)
         for col in expected_cols:
             if col not in df_j.columns:
                 df_j[col] = ""
@@ -229,7 +247,7 @@ def bs_greeks(S, K, T, r, sigma, option_type):
 
 # --- UI หลัก ---
 st.title("📈 TFEX Multi-Asset Options & Futures Pro")
-st.markdown("ระบบวิเคราะห์ Payoff Chart และความเสี่ยงพอร์ต TFEX")
+st.markdown("ระบบวิเคราะห์ Payoff Chart และความเสี่ยงพอร์ต TFEX (บันทึกข้อมูลอัตโนมัติ & สำรองไฟล์ถาวร)")
 
 # --- Sidebar ---
 st.sidebar.header("📁 จัดการพอร์ต")
@@ -237,9 +255,34 @@ available_portfolios = get_available_portfolios()
 selected_portfolio_tab = st.sidebar.selectbox("เลือกพอร์ต", available_portfolios)
 active_portfolio = selected_portfolio_tab
 
+# --- ระบบดาวน์โหลด/อัปโหลดไฟล์ CSV เพื่อความปลอดภัยสูงสุด ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("💾 สำรอง / กู้คืนข้อมูลพอร์ต")
+
+# โหลดข้อมูลปัจจุบันของพอร์ตที่เลือกมาทำปุ่มดาวน์โหลด
+current_df_for_download = load_trades_from_file(active_portfolio)
+csv_bytes = current_df_for_download.to_csv(index=False).encode('utf-8')
+st.sidebar.download_button(
+    label=f"📥 ดาวน์โหลดไฟล์ `{active_portfolio}`",
+    data=csv_bytes,
+    file_name=active_portfolio,
+    mime="text/csv",
+    help="ดาวน์โหลดไฟล์ CSV นี้เก็บไว้ในเครื่องคอมพิวเตอร์ของคุณเพื่อความปลอดภัย"
+)
+
+uploaded_file = st.sidebar.file_uploader(f"📤 อัปโหลดไฟล์เพื่อกู้คืนพอร์ต (`{active_portfolio}`)", type=["csv"])
+if uploaded_file is not None:
+    try:
+        uploaded_df = pd.read_csv(uploaded_file)
+        save_trades_to_file(uploaded_df, active_portfolio)
+        st.sidebar.success("กู้คืนและบันทึกข้อมูลจากไฟล์สำเร็จ!")
+        st.rerun()
+    except Exception as e:
+        st.sidebar.error(f"เกิดข้อผิดพลาดในการอ่านไฟล์: {e}")
+
 st.sidebar.markdown("---")
 st.sidebar.subheader("➕ สร้างพอร์ตใหม่")
-new_port_name = st.sidebar.text_input("ชื่อไฟล์พอร์ตใหม่")
+new_port_name = st.sidebar.text_input("ชื่อไฟล์พอร์ตใหม่ (เช่น portfolio_4.csv)")
 if st.sidebar.button("สร้างพอร์ต"):
     if new_port_name:
         if not new_port_name.endswith(".csv"):
@@ -249,7 +292,7 @@ if st.sidebar.button("สร้างพอร์ต"):
                 "ID", "Market", "Strategy", "Series", "Type", "Status", 
                 "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot"
             ])
-            empty_df.to_csv(new_port_name, index=False)
+            save_trades_to_file(empty_df, new_port_name)
             st.sidebar.success("สร้างสำเร็จ!")
             active_portfolio = new_port_name
             st.rerun()
@@ -268,7 +311,7 @@ current_spot, auto_volatility, last_update_time = get_market_data(selected_marke
 
 col_head1, col_head2 = st.columns([1, 2])
 with col_head1:
-    if st.button("🔄 รีเฟรช"):
+    if st.button("🔄 รีเฟรชราคา"):
         st.cache_data.clear()
         st.rerun()
 with col_head2:
@@ -323,13 +366,13 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
     expiry_date = st.date_input("วันหมดอายุ", value=date.today() + timedelta(days=30))
     
     confirm_add = st.checkbox("☑️ ยืนยันข้อมูล", value=False)
-    submitted = st.form_submit_button("บันทึก")
+    submitted = st.form_submit_button("บันทึกสัญญา")
     
     if submitted:
         if not confirm_add:
             st.sidebar.error("โปรดติ๊กยืนยันข้อมูล")
         else:
-            new_id = int(trades_df["ID"].max() + 1) if not trades_df.empty and "ID" in trades_df.columns else 1
+            new_id = int(trades_df["ID"].max() + 1) if not trades_df.empty and "ID" in trades_df.columns and not pd.isna(trades_df["ID"].max()) else 1
             new_row = pd.DataFrame([{
                 "ID": new_id, "Market": selected_market, "Strategy": strategy_name, "Series": series_name,
                 "Type": position_type, "Status": position_status, "Strike": strike, "Premium": premium,
@@ -352,7 +395,7 @@ if not trades_df.empty:
     
     col_b1, col_b2 = st.columns(2)
     with col_b1:
-        if st.button("💾 บันทึกการแก้ไข"):
+        if st.button("💾 บันทึกการแก้ไขตาราง"):
             save_trades_to_file(edited_df, active_portfolio)
             st.success("บันทึกสำเร็จ!")
             st.rerun()
@@ -369,7 +412,7 @@ if not trades_df.empty:
         else:
             st.warning("โปรดติ๊กยืนยันการลบ")
 else:
-    st.info("พอร์ตว่าง")
+    st.info("พอร์ตว่าง ไม่มีรายการเทรด")
 
 # --- รวมพอร์ต & Archive ---
 st.markdown("<br>", unsafe_allow_html=True)
@@ -461,7 +504,7 @@ st.subheader(f"📝 สมุดบันทึกพอร์ต: `{active_port
 with st.form("journal_form"):
     j_title = st.text_input("หัวข้อ", "บันทึกประจำวัน")
     j_notes = st.text_area("รายละเอียด / แผนการเทรด")
-    if st.form_submit_button("💾 บันทึก"):
+    if st.form_submit_button("💾 บันทึกสมุดบันทึก"):
         save_journal_entry(active_portfolio, j_title, spot_price, volatility_input, total_pnl_sum, j_notes)
         st.success("บันทึกสำเร็จ!")
         st.rerun()
@@ -591,7 +634,6 @@ with sc4:
 be_str = ", ".join([f"`{bp:,.2f}`" for bp in be_points]) if be_points else "ไม่มีจุดคุ้มทุนในช่วงนี้"
 st.markdown(f"<br>💡 **จุดคุ้มทุน (Break-even):** {be_str}", unsafe_allow_html=True)
 
-# เพิ่มเว้นวรรค 1 บรรทัดตามคำขอ
 st.markdown("<br>", unsafe_allow_html=True)
 
 fig.add_trace(go.Scatter(
@@ -619,7 +661,7 @@ pnl_status = f"+{spot_pnl_expiry:,.2f}" if spot_pnl_expiry >= 0 else f"{spot_pnl
 
 fig.add_annotation(
     x=spot_price, y=1.03, yref="paper", text=f"Spot: {spot_price:,.2f} ({pnl_status})",
-    showarrow=False, font=dict(color="red", size=13, weight="bold"), xanchor="center", yanchor="bottom"
+    showarrow=False, font=dict(color="red", size=13), xanchor="center", yanchor="bottom"
 )
 
 fig.update_layout(

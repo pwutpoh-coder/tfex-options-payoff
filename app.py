@@ -323,7 +323,7 @@ st.sidebar.subheader("📂 สรุปพอร์ตทั้งหมด")
 st.sidebar.dataframe(get_portfolio_summary(), use_container_width=True, hide_index=True)
 
 st.sidebar.markdown("---")
-st.sidebar.header("⚙️️ ตั้งค่าตลาด")
+st.sidebar.header("⚙ ตั้งค่าตลาด")
 selected_market = st.sidebar.selectbox("เลือกตลาด", ["TFEX USD/THB", "TFEX SET50"])
 
 current_spot, auto_volatility, last_update_time = get_market_data(selected_market)
@@ -347,13 +347,11 @@ contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
 trades_df = load_trades_from_file(active_portfolio)
 
-# --- สร้างรายการ Strike อัตโนมัติตามตลาด (สำหรับใช้ใน st.selectbox แบบมีตัวเลือกอ้างอิง) ---
+# --- สร้างรายการ Strike อัตโนมัติตามตลาด (สำหรับแสดงเป็นข้อมูลอ้างอิง) ---
 if selected_market == "TFEX USD/THB":
     base_strike_list = [round(round(spot_price / 0.25) * 0.25 + i * 0.25, 2) for i in range(-5, 6)]
-    strike_options = [float(round(s, 2)) for s in base_strike_list]
 else:
     base_strike_list = [int(round(spot_price / 10.0) * 10.0 + i * 10) for i in range(-10, 11)]
-    strike_options = [float(s) for s in base_strike_list]
 
 current_year = date.today().year
 short_year = str(current_year)[-2:]
@@ -363,7 +361,7 @@ month_codes = ["H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]
 
 generated_series_options = [f"{prefix_code}{m}{yr}" for yr in [short_year, next_short_year] for m in month_codes]
 
-# --- ฟอร์มเพิ่มสัญญา (รวม Dropdown และช่องพิมพ์ Strike เป็นอันเดียวกัน ให้ว่างเปล่าเริ่มต้น) ---
+# --- ฟอร์มเพิ่มสัญญา (ช่อง Strike เป็นช่องเดี่ยว พิมพ์ตัวเลขเองได้อิสระ ไม่บังคับเลือกจาก Dropdown และเว้นว่างเริ่มต้น) ---
 st.sidebar.subheader("➕ เพิ่มสัญญาใหม่")
 if "form_key" not in st.session_state:
     st.session_state["form_key"] = 0
@@ -374,14 +372,17 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
     position_status = st.selectbox("สถานะ", options=["Open", "Close"], index=0)
     position_type = st.selectbox("ประเภท", options=["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"], index=0)
     
-    # ใช้ st.selectbox ที่เปิดรับค่ากำหนดเอง (Streamlit support การพิมพ์ทับใน selectbox หรือใช้ตัวเลือกจากลิสต์)
-    # กำหนดให้ค่าเริ่มต้นเป็น None / ว่างเปล่า เพื่อไม่ให้มีตัวเลขค้างไว้
-    strike = st.selectbox(
-        "Strike Price (เลือกจากรายการ หรือพิมพ์ตัวเลขเองได้ทันที)",
-        options=strike_options,
-        index=None,
-        placeholder="พิมพ์หรือเลือก Strike Price..."
+    # ใช้ st.number_input ที่กำหนดค่า value=None เพื่อให้ช่องว่างเปล่าเริ่มต้น และสามารถพิมพ์ตัวเลขอิสระได้ทันที
+    strike = st.number_input(
+        "Strike Price (พิมพ์ตัวเลขเองได้อิสระ หรือดูราคาอ้างอิงด้านล่าง)",
+        value=None,
+        format="%.4f",
+        placeholder="ระบุ Strike Price..."
     )
+    
+    # แสดงรายการราคาอ้างอิงอัตโนมัติไว้เป็นแนวทางให้ผู้ใช้เห็น
+    ref_str_display = ", ".join([str(s) for s in base_strike_list[:8]])
+    st.markdown(f"<small style='color: #666;'>💡 ราคาอ้างอิงรอบ Spot: {ref_str_display}...</small>", unsafe_allow_html=True)
 
     premium = st.number_input("ราคาพรีเมี่ยม", value=0.0, format="%.2f")
     contracts = st.number_input("จำนวนสัญญา", value=1, min_value=1, step=1)
@@ -397,7 +398,7 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
         if not confirm_add:
             st.sidebar.error("โปรดติ๊กยืนยันข้อมูล")
         elif strike is None:
-            st.sidebar.error("โปรดระบุหรือเลือก Strike Price")
+            st.sidebar.error("โปรดระบุ Strike Price")
         else:
             new_id = int(trades_df["ID"].max() + 1) if not trades_df.empty and "ID" in trades_df.columns and not pd.isna(trades_df["ID"].max()) else 1
             new_row = pd.DataFrame([{
@@ -491,7 +492,6 @@ if not market_trades.empty:
         open_cnt = sub_df[sub_df["Status"] == "Open"]["Contracts"].sum() if not sub_df.empty else 0
         close_cnt = sub_df[sub_df["Status"] == "Close"]["Contracts"].sum() if not sub_df.empty else 0
         
-        # กำหนดสไตล์ป้ายสี
         badge_class = "badge-long-fu"
         if "Short Futures" in t_item: badge_class = "badge-short-fu"
         elif "Long Call" in t_item: badge_class = "badge-long-call"
@@ -544,7 +544,6 @@ if not market_trades.empty:
         else:
             item_pnl = 0
 
-        # ใส่ป้ายสัญลักษณ์สีไม่ฉูดฉาดตามประเภท
         badge_class = "badge-long-fu"
         if "Short Futures" in p_type: badge_class = "badge-short-fu"
         elif "Long Call" in p_type: badge_class = "badge-long-call"

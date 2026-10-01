@@ -347,13 +347,15 @@ contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
 trades_df = load_trades_from_file(active_portfolio)
 
-# --- สร้างรายการ Strike อัตโนมัติตามตลาดสำหรับช่องตัวเลือกเสริมดรอปดาวน์ ---
+# --- สร้างรายการ Strike อัตโนมัติตามตลาด (ใช้ st.selectbox แบบรองรับการพิมพ์ค่าอิสระได้ในช่องเดียวกัน) ---
 if selected_market == "TFEX USD/THB":
     base_strike_list = [round(round(spot_price / 0.25) * 0.25 + i * 0.25, 2) for i in range(-5, 6)]
-    step_val = 0.25
+    default_strike_str = f"{round(spot_price, 2):.2f}"
 else:
     base_strike_list = [int(round(spot_price / 10.0) * 10.0 + i * 10) for i in range(-10, 11)]
-    step_val = 1.0
+    default_strike_str = f"{int(round(spot_price))}"
+
+strike_options = [f"{s:.2f}" if selected_market == "TFEX USD/THB" else f"{s}" for s in base_strike_list]
 
 current_year = date.today().year
 short_year = str(current_year)[-2:]
@@ -363,7 +365,7 @@ month_codes = ["H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]
 
 generated_series_options = [f"{prefix_code}{m}{yr}" for yr in [short_year, next_short_year] for m in month_codes]
 
-# --- ฟอร์มเพิ่มสัญญา (รวม Strike ให้เป็นช่องเดียวพิมพ์และเลือกได้อิสระ) ---
+# --- ฟอร์มเพิ่มสัญญา (รวมช่องเลือกและพิมพ์ Strike เป็นช่องเดียวกัน) ---
 st.sidebar.subheader("➕ เพิ่มสัญญาใหม่")
 if "form_key" not in st.session_state:
     st.session_state["form_key"] = 0
@@ -374,14 +376,19 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
     position_status = st.selectbox("สถานะ", options=["Open", "Close"], index=0)
     position_type = st.selectbox("ประเภท", options=["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"], index=0)
     
-    # รวมช่อง Strike ให้เป็นช่องเดียว (สามารถกดเลือกจากระดับราคา หรือพิมพ์ตัวเลขทศนิยม/ราคาที่ต้องการลงไปได้ทันที)
-    default_strike_val = float(round(spot_price, 2)) if selected_market == "TFEX USD/THB" else float(round(spot_price, 0))
-    strike = st.number_input(
-        "Strike Price (พิมพ์ระบุราคาได้อิสระ หรือปรับค่าตามต้องการ)", 
-        value=default_strike_val, 
-        step=step_val, 
-        format="%.2f" if selected_market == "TFEX USD/THB" else "%.1f"
+    # รวมช่องเลือกจากราคาอัตโนมัติและช่องพิมพ์เองไว้ใน selectbox เดียวกัน (Streamlit อนุญาตให้พิมพ์ค่าใหม่ลงไปได้เลย)
+    strike_input_val = st.selectbox(
+        "Strike Price (เลือกจากระดับราคา หรือพิมพ์ตัวเลขราคาที่ต้องการเอง)", 
+        options=strike_options, 
+        index=len(strike_options)//2 if len(strike_options) > 0 else 0,
+        help="สามารถคลิกเลือกจากรายการ หรือคลิกแล้วพิมพ์ตัวเลขราคา Strike ตามต้องการได้ทันที"
     )
+    
+    # แปลงค่า Strike ที่ผู้ใช้เลือกหรือพิมพ์เข้ามาให้อยู่ในรูปตัวเลขทศนิยม
+    try:
+        strike = float(strike_input_val)
+    except:
+        strike = float(spot_price)
 
     premium = st.number_input("ราคาพรีเมี่ยม", value=0.0, format="%.2f")
     contracts = st.number_input("จำนวนสัญญา", value=1, min_value=1, step=1)

@@ -17,7 +17,7 @@ st.set_page_config(
 # กำหนดโซนเวลา Bangkok (UTC+7)
 BANGKOK_TZ = timezone(timedelta(hours=7))
 
-# --- CSS พิเศษช่วยปรับแต่งการแสดงผลบนมือถือให้สวยงามยิ่งขึ้น ---
+# --- CSS พิเศษช่วยปรับแต่งการแสดงผลบนมือถือและสัญลักษณ์สี (Soft Color Badges) ---
 st.markdown("""
     <style>
     .stMetric {
@@ -26,6 +26,12 @@ st.markdown("""
         border-radius: 8px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
+    .badge-long-fu { background-color: #e2f0d9; color: #385723; padding: 3px 8px; border-radius: 4px; font-weight: 500; font-size: 12px; }
+    .badge-short-fu { background-color: #fce4d6; color: #c65911; padding: 3px 8px; border-radius: 4px; font-weight: 500; font-size: 12px; }
+    .badge-long-call { background-color: #d9e1f2; color: #1f3864; padding: 3px 8px; border-radius: 4px; font-weight: 500; font-size: 12px; }
+    .badge-short-call { background-color: #f2d9d9; color: #c00000; padding: 3px 8px; border-radius: 4px; font-weight: 500; font-size: 12px; }
+    .badge-long-put { background-color: #fff2cc; color: #7f6000; padding: 3px 8px; border-radius: 4px; font-weight: 500; font-size: 12px; }
+    .badge-short-put { background-color: #e1d5e7; color: #351c75; padding: 3px 8px; border-radius: 4px; font-weight: 500; font-size: 12px; }
     @media (max-width: 768px) {
         .main .block-container {
             padding-left: 1rem;
@@ -343,10 +349,8 @@ trades_df = load_trades_from_file(active_portfolio)
 
 # --- สร้างรายการ Strike อัตโนมัติตามตลาด ---
 if selected_market == "TFEX USD/THB":
-    # ลบ 5 ระดับ ถึง บวก 5 ระดับ ทีละ 0.25 จุด อ้างอิงจาก Spot ปัจจุบัน
     base_strike_list = [round(round(spot_price / 0.25) * 0.25 + i * 0.25, 2) for i in range(-5, 6)]
 else:
-    # ลบ 10 ระดับ ถึง บวก 10 ระดับ ทีละ 10 จุด อ้างอิงจาก Spot ปัจจุบัน
     base_strike_list = [int(round(spot_price / 10.0) * 10.0 + i * 10) for i in range(-10, 11)]
 
 strike_options = [f"{s:.2f}" if selected_market == "TFEX USD/THB" else f"{s}" for s in base_strike_list]
@@ -371,12 +375,17 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
     position_status = st.selectbox("สถานะ", options=["Open", "Close"], index=0)
     position_type = st.selectbox("ประเภท", options=["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"], index=0)
     
-    selected_strike_choice = st.selectbox("Strike Price (เลือกจากระดับราคา หรือพิมพ์เอง)", options=strike_options)
+    selected_strike_choice = st.selectbox("Strike Price (เลือกจากระดับราคา หรือเลือกช่องพิมพ์เอง)", options=strike_options)
+    
+    # เปิดให้ช่องกรอก Strike เองสามารถรับค่าและบันทึกได้อิสระเสมอโดยไม่จำกัดว่าจะต้องตรงกับ Dropdown
+    custom_strike_input = st.number_input("ระบุ Strike Price เองตามต้องการ", value=float(round(spot_price, 2)), format="%.2f")
+    
     if selected_strike_choice == "✏️ พิมพ์ Strike เอง...":
-        strike = st.number_input("ระบุ Strike Price เอง", value=float(round(spot_price, 2)), format="%.2f")
+        strike = custom_strike_input
     else:
-        strike = float(selected_strike_choice)
-        st.markdown(f"<div style='font-size: 12px; color: gray;'>Strike ที่เลือก: {strike}</div>", unsafe_allow_html=True)
+        # หากผู้ใช้เลือกจาก Dropdown แต่มีการแก้ตัวเลขในช่องพิมพ์เอง หรือเลือกใช้ค่าจาก Dropdown สามารถเลือกใช้ custom_strike_input หรือ parse จาก Dropdown ได้
+        # เพื่อความยืดหยุ่นสูงสุดตามความต้องการ ให้ใช้ค่าจากช่อง custom_strike_input เป็นหลัก หรือหากต้องการตาม Dropdown ให้เช็คเงื่อนไข
+        strike = custom_strike_input if custom_strike_input != float(round(spot_price, 2)) else float(selected_strike_choice)
 
     premium = st.number_input("ราคาพรีเมี่ยม", value=0.0, format="%.2f")
     contracts = st.number_input("จำนวนสัญญา", value=1, min_value=1, step=1)
@@ -472,7 +481,50 @@ if not combined_trades_df.empty and "Market" in combined_trades_df.columns:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- ตารางสรุป P&L ---
+# --- สรุปจำนวนสัญญาแยกตามประเภท (Summary of Contracts by Type) ---
+st.subheader("📊 สรุปจำนวนสัญญาแยกตามประเภท")
+if not market_trades.empty:
+    types_list = ["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"]
+    contract_summary_data = []
+    
+    for t_item in types_list:
+        sub_df = market_trades[market_trades["Type"] == t_item]
+        total_cnt = sub_df["Contracts"].sum() if not sub_df.empty else 0
+        open_cnt = sub_df[sub_df["Status"] == "Open"]["Contracts"].sum() if not sub_df.empty else 0
+        close_cnt = sub_df[sub_df["Status"] == "Close"]["Contracts"].sum() if not sub_df.empty else 0
+        
+        # คำนวณคงเหลือ Net Open (Long เป็นบวก, Short เป็นลบ หรือตามตรรกะสัญญา Open)
+        if "Long" in t_item:
+            net_open = sub_df[(sub_df["Status"] == "Open")]["Contracts"].sum() if not sub_df.empty else 0
+        else:
+            net_open = sub_df[(sub_df["Status"] == "Open")]["Contracts"].sum() if not sub_df.empty else 0
+
+        # กำหนดสไตล์ป้ายสี
+        badge_class = "badge-long-fu"
+        if "Short Futures" in t_item: badge_class = "badge-short-fu"
+        elif "Long Call" in t_item: badge_class = "badge-long-call"
+        elif "Short Call" in t_item: badge_class = "badge-short-call"
+        elif "Long Put" in t_item: badge_class = "badge-long-put"
+        elif "Short Put" in t_item: badge_class = "badge-short-put"
+        
+        type_html = f'<span class="{badge_class}">{t_item}</span>'
+        
+        contract_summary_data.append({
+            "ประเภทสัญญา": type_html,
+            "ทั้งหมด (สัญญา)": int(total_cnt),
+            "เปิด (Open)": int(open_cnt),
+            "ปิด (Close)": int(close_cnt),
+            "คงเหลือเปิด (Net Open)": int(open_cnt)
+        })
+    
+    cs_df = pd.DataFrame(contract_summary_data)
+    st.markdown(cs_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+else:
+    st.info("ไม่มีข้อมูลสัญญาในตลาดนี้สำหรับการสรุปจำนวน")
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# --- ตารางสรุป P&L พร้อมป้ายสัญลักษณ์สี ---
 st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน")
 total_pnl_sum = 0.0
 if not market_trades.empty:
@@ -500,8 +552,18 @@ if not market_trades.empty:
         else:
             item_pnl = 0
 
+        # ใส่ป้ายสัญลักษณ์สีไม่ฉูดฉาดตามประเภท
+        badge_class = "badge-long-fu"
+        if "Short Futures" in p_type: badge_class = "badge-short-fu"
+        elif "Long Call" in p_type: badge_class = "badge-long-call"
+        elif "Short Call" in p_type: badge_class = "badge-short-call"
+        elif "Long Put" in p_type: badge_class = "badge-long-put"
+        elif "Short Put" in p_type: badge_class = "badge-short-put"
+        
+        type_badge_html = f'<span class="{badge_class}">{p_type}</span>'
+
         summary_list.append({
-            "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": p_type,
+            "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
             "สถานะ": status, "สัญญา": qty * sign_m, "P&L (บาท)": round(item_pnl, 2)
         })
     
@@ -513,7 +575,8 @@ if not market_trades.empty:
             "สถานะ": "-", "สัญญา": summary_df["สัญญา"].sum(), "P&L (บาท)": round(total_pnl_sum, 2)
         }])
         summary_df = pd.concat([summary_df, total_sum_row], ignore_index=True)
-    st.dataframe(summary_df, use_container_width=True)
+    
+    st.markdown(summary_df.to_html(escape=False, index=False), unsafe_allow_html=True)
 else:
     st.info("ไม่มีสัญญาในตลาดนี้")
 

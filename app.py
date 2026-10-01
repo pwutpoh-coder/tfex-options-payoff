@@ -347,14 +347,6 @@ contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
 trades_df = load_trades_from_file(active_portfolio)
 
-# --- สร้างรายการ Strike อัตโนมัติตามตลาด (สำหรับให้ผู้ใช้เลือกหรือพิมพ์ทับได้อิสระ) ---
-if selected_market == "TFEX USD/THB":
-    base_strike_list = [round(round(spot_price / 0.25) * 0.25 + i * 0.25, 2) for i in range(-5, 6)]
-    strike_options = [float(round(s, 2)) for s in base_strike_list]
-else:
-    base_strike_list = [int(round(spot_price / 10.0) * 10.0 + i * 10) for i in range(-10, 11)]
-    strike_options = [float(s) for s in base_strike_list]
-
 current_year = date.today().year
 short_year = str(current_year)[-2:]
 next_short_year = str(current_year + 1)[-2:]
@@ -363,7 +355,7 @@ month_codes = ["H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]
 
 generated_series_options = [f"{prefix_code}{m}{yr}" for yr in [short_year, next_short_year] for m in month_codes]
 
-# --- ฟอร์มเพิ่มสัญญา (ใช้ st.text_input ร่วมกับการแปลงค่า เพื่อให้พิมพ์ตัวเลขใดๆ ได้อย่างอิสระและเริ่มต้นว่างเปล่า) ---
+# --- ฟอร์มเพิ่มสัญญา (ช่อง Strike Price เป็นแบบพิมพ์อิสระ ปล่อยว่างเริ่มต้นได้ทันที) ---
 st.sidebar.subheader("➕ เพิ่มสัญญาใหม่")
 if "form_key" not in st.session_state:
     st.session_state["form_key"] = 0
@@ -374,11 +366,8 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
     position_status = st.selectbox("สถานะ", options=["Open", "Close"], index=0)
     position_type = st.selectbox("ประเภท", options=["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"], index=0)
     
-    # แสดงตัวเลือกอ้างอิงให้ผู้ใช้ทราบเพื่อความสะดวกในการคัดลอกหรือดูค่า
-    st.markdown(f"<span style='font-size: 11px; color: gray;'>ราคาอ้างอิง Strike ใกล้เคียง: {', '.join([str(s) for s in strike_options[:7]])} ...</span>", unsafe_allow_html=True)
-    
-    # ช่องกรอก Strike แบบอิสระ (เริ่มต้นปล่อยว่างเปล่าตามต้องการ พิมพ์ตัวเลขใดๆ ได้ทันที)
-    strike_input_str = st.text_input("Strike Price (พิมพ์ตัวเลขที่ต้องการได้อิสระ)", value="", placeholder="เช่น 950 หรือ 925.5")
+    # ช่องกรอก Strike แบบอิสระ ไม่แสดงข้อความราคาอ้างอิงเกะกะ
+    strike_input_str = st.text_input("Strike Price", value="", placeholder="เช่น 950 หรือ 33.5")
 
     premium = st.number_input("ราคาพรีเมี่ยม", value=0.0, format="%.2f")
     contracts = st.number_input("จำนวนสัญญา", value=1, min_value=1, step=1)
@@ -495,7 +484,6 @@ if not market_trades.empty:
         open_cnt = sub_df[sub_df["Status"] == "Open"]["Contracts"].sum() if not sub_df.empty else 0
         close_cnt = sub_df[sub_df["Status"] == "Close"]["Contracts"].sum() if not sub_df.empty else 0
         
-        # กำหนดสไตล์ป้ายสี
         badge_class = "badge-long-fu"
         if "Short Futures" in t_item: badge_class = "badge-short-fu"
         elif "Long Call" in t_item: badge_class = "badge-long-call"
@@ -548,7 +536,6 @@ if not market_trades.empty:
         else:
             item_pnl = 0
 
-        # ใส่ป้ายสัญลักษณ์สีไม่ฉูดฉาดตามประเภท
         badge_class = "badge-long-fu"
         if "Short Futures" in p_type: badge_class = "badge-short-fu"
         elif "Long Call" in p_type: badge_class = "badge-long-call"

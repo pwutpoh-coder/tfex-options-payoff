@@ -347,14 +347,13 @@ contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
 trades_df = load_trades_from_file(active_portfolio)
 
-# --- สร้างรายการ Strike อัตโนมัติตามตลาด ---
+# --- สร้างรายการ Strike อัตโนมัติตามตลาดสำหรับช่องตัวเลือกเสริมดรอปดาวน์ ---
 if selected_market == "TFEX USD/THB":
     base_strike_list = [round(round(spot_price / 0.25) * 0.25 + i * 0.25, 2) for i in range(-5, 6)]
+    step_val = 0.25
 else:
     base_strike_list = [int(round(spot_price / 10.0) * 10.0 + i * 10) for i in range(-10, 11)]
-
-strike_options = [f"{s:.2f}" if selected_market == "TFEX USD/THB" else f"{s}" for s in base_strike_list]
-strike_options.append("✏️ พิมพ์ Strike เอง...")
+    step_val = 1.0
 
 current_year = date.today().year
 short_year = str(current_year)[-2:]
@@ -364,7 +363,7 @@ month_codes = ["H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]
 
 generated_series_options = [f"{prefix_code}{m}{yr}" for yr in [short_year, next_short_year] for m in month_codes]
 
-# --- ฟอร์มเพิ่มสัญญา (เคลียร์ค่าว่างทั้งหมด ไม่มีค่าเริ่มต้นค้างไว้) ---
+# --- ฟอร์มเพิ่มสัญญา (รวม Strike ให้เป็นช่องเดียวพิมพ์และเลือกได้อิสระ) ---
 st.sidebar.subheader("➕ เพิ่มสัญญาใหม่")
 if "form_key" not in st.session_state:
     st.session_state["form_key"] = 0
@@ -375,17 +374,14 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
     position_status = st.selectbox("สถานะ", options=["Open", "Close"], index=0)
     position_type = st.selectbox("ประเภท", options=["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"], index=0)
     
-    selected_strike_choice = st.selectbox("Strike Price (เลือกจากระดับราคา หรือเลือกช่องพิมพ์เอง)", options=strike_options)
-    
-    # เปิดให้ช่องกรอก Strike เองสามารถรับค่าและบันทึกได้อิสระเสมอโดยไม่จำกัดว่าจะต้องตรงกับ Dropdown
-    custom_strike_input = st.number_input("ระบุ Strike Price เองตามต้องการ", value=float(round(spot_price, 2)), format="%.2f")
-    
-    if selected_strike_choice == "✏️ พิมพ์ Strike เอง...":
-        strike = custom_strike_input
-    else:
-        # หากผู้ใช้เลือกจาก Dropdown แต่มีการแก้ตัวเลขในช่องพิมพ์เอง หรือเลือกใช้ค่าจาก Dropdown สามารถเลือกใช้ custom_strike_input หรือ parse จาก Dropdown ได้
-        # เพื่อความยืดหยุ่นสูงสุดตามความต้องการ ให้ใช้ค่าจากช่อง custom_strike_input เป็นหลัก หรือหากต้องการตาม Dropdown ให้เช็คเงื่อนไข
-        strike = custom_strike_input if custom_strike_input != float(round(spot_price, 2)) else float(selected_strike_choice)
+    # รวมช่อง Strike ให้เป็นช่องเดียว (สามารถกดเลือกจากระดับราคา หรือพิมพ์ตัวเลขทศนิยม/ราคาที่ต้องการลงไปได้ทันที)
+    default_strike_val = float(round(spot_price, 2)) if selected_market == "TFEX USD/THB" else float(round(spot_price, 0))
+    strike = st.number_input(
+        "Strike Price (พิมพ์ระบุราคาได้อิสระ หรือปรับค่าตามต้องการ)", 
+        value=default_strike_val, 
+        step=step_val, 
+        format="%.2f" if selected_market == "TFEX USD/THB" else "%.1f"
+    )
 
     premium = st.number_input("ราคาพรีเมี่ยม", value=0.0, format="%.2f")
     contracts = st.number_input("จำนวนสัญญา", value=1, min_value=1, step=1)
@@ -493,12 +489,6 @@ if not market_trades.empty:
         open_cnt = sub_df[sub_df["Status"] == "Open"]["Contracts"].sum() if not sub_df.empty else 0
         close_cnt = sub_df[sub_df["Status"] == "Close"]["Contracts"].sum() if not sub_df.empty else 0
         
-        # คำนวณคงเหลือ Net Open (Long เป็นบวก, Short เป็นลบ หรือตามตรรกะสัญญา Open)
-        if "Long" in t_item:
-            net_open = sub_df[(sub_df["Status"] == "Open")]["Contracts"].sum() if not sub_df.empty else 0
-        else:
-            net_open = sub_df[(sub_df["Status"] == "Open")]["Contracts"].sum() if not sub_df.empty else 0
-
         # กำหนดสไตล์ป้ายสี
         badge_class = "badge-long-fu"
         if "Short Futures" in t_item: badge_class = "badge-short-fu"

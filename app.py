@@ -341,15 +341,16 @@ contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
 trades_df = load_trades_from_file(active_portfolio)
 
-# --- Strike และ Series ---
+# --- สร้างรายการ Strike อัตโนมัติตามตลาด ---
 if selected_market == "TFEX USD/THB":
-    base_center = round(spot_price * 4) / 4.0
-    step = 0.25
-    base_strikes = [f"{round(base_center + i * step, 2):.2f}" for i in range(-25, 26)]
+    # ลบ 5 ระดับ ถึง บวก 5 ระดับ ทีละ 0.25 จุด อ้างอิงจาก Spot ปัจจุบัน
+    base_strike_list = [round(round(spot_price / 0.25) * 0.25 + i * 0.25, 2) for i in range(-5, 6)]
 else:
-    base_center = round(spot_price / 10.0) * 10.0
-    step = 10.0
-    base_strikes = [int(round(base_center + i * step)) for i in range(-20, 21)]
+    # ลบ 10 ระดับ ถึง บวก 10 ระดับ ทีละ 10 จุด อ้างอิงจาก Spot ปัจจุบัน
+    base_strike_list = [int(round(spot_price / 10.0) * 10.0 + i * 10) for i in range(-10, 11)]
+
+strike_options = [f"{s:.2f}" if selected_market == "TFEX USD/THB" else f"{s}" for s in base_strike_list]
+strike_options.append("✏️ พิมพ์ Strike เอง...")
 
 current_year = date.today().year
 short_year = str(current_year)[-2:]
@@ -359,26 +360,32 @@ month_codes = ["H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]
 
 generated_series_options = [f"{prefix_code}{m}{yr}" for yr in [short_year, next_short_year] for m in month_codes]
 
-# --- ฟอร์มเพิ่มสัญญา ---
+# --- ฟอร์มเพิ่มสัญญา (เคลียร์ค่าว่างทั้งหมด ไม่มีค่าเริ่มต้นค้างไว้) ---
 st.sidebar.subheader("➕ เพิ่มสัญญาใหม่")
 if "form_key" not in st.session_state:
     st.session_state["form_key"] = 0
 
 with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
-    strategy_name = st.text_input("ชื่อกลยุทธ์", "Strategy #1")
-    series_name = st.selectbox("ซีรีส์", options=generated_series_options)
-    position_status = st.selectbox("สถานะ", ["Open", "Close"])
-    position_type = st.selectbox("ประเภท", ["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"])
+    strategy_name = st.text_input("ชื่อกลยุทธ์", value="")
+    series_name = st.selectbox("ซีรีส์", options=generated_series_options, index=0)
+    position_status = st.selectbox("สถานะ", options=["Open", "Close"], index=0)
+    position_type = st.selectbox("ประเภท", options=["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"], index=0)
     
-    strike = st.number_input("Strike Price", value=float(round(spot_price, 2)), format="%.2f")
-    premium = st.number_input("ราคาพรีเมี่ยม", value=float(0.25 if selected_market == "TFEX USD/THB" else 15.0), format="%.2f")
+    selected_strike_choice = st.selectbox("Strike Price (เลือกจากระดับราคา หรือพิมพ์เอง)", options=strike_options)
+    if selected_strike_choice == "✏️ พิมพ์ Strike เอง...":
+        strike = st.number_input("ระบุ Strike Price เอง", value=float(round(spot_price, 2)), format="%.2f")
+    else:
+        strike = float(selected_strike_choice)
+        st.markdown(f"<div style='font-size: 12px; color: gray;'>Strike ที่เลือก: {strike}</div>", unsafe_allow_html=True)
+
+    premium = st.number_input("ราคาพรีเมี่ยม", value=0.0, format="%.2f")
     contracts = st.number_input("จำนวนสัญญา", value=1, min_value=1, step=1)
-    commission = st.number_input("ค่าคอมฯ รวม/สัญญา", value=float(30.0 if selected_market == "TFEX USD/THB" else 60.0), format="%.2f")
+    commission = st.number_input("ค่าคอมฯ รวม/สัญญา", value=0.0, format="%.2f")
     
     trade_date = st.date_input("วันที่ซื้อ", value=date.today())
     expiry_date = st.date_input("วันหมดอายุ", value=date.today() + timedelta(days=30))
     
-    confirm_add = st.checkbox("☑️️ ยืนยันข้อมูล", value=False)
+    confirm_add = st.checkbox("☑ ยืนยันข้อมูล", value=False)
     submitted = st.form_submit_button("บันทึกสัญญา")
     
     if submitted:
@@ -387,10 +394,10 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
         else:
             new_id = int(trades_df["ID"].max() + 1) if not trades_df.empty and "ID" in trades_df.columns and not pd.isna(trades_df["ID"].max()) else 1
             new_row = pd.DataFrame([{
-                "ID": new_id, "Market": selected_market, "Strategy": strategy_name, "Series": series_name,
-                "Type": position_type, "Status": position_status, "Strike": strike, "Premium": premium,
-                "Contracts": contracts, "Commission": commission, "TradeDate": str(trade_date),
-                "ExpiryDate": str(expiry_date), "EntrySpot": spot_price
+                "ID": new_id, "Market": selected_market, "Strategy": strategy_name if strategy_name else "Strategy #1", 
+                "Series": series_name, "Type": position_type, "Status": position_status, 
+                "Strike": strike, "Premium": premium, "Contracts": contracts, "Commission": commission, 
+                "TradeDate": str(trade_date), "ExpiryDate": str(expiry_date), "EntrySpot": spot_price
             }])
             trades_df = pd.concat([trades_df, new_row], ignore_index=True)
             save_trades_to_file(trades_df, active_portfolio)
@@ -692,7 +699,7 @@ st.markdown("<br><br>", unsafe_allow_html=True)
 # ==========================================
 # กราฟที่ 2 & 3: Time Decay Simulation & Greeks
 # ==========================================
-st.subheader("⏱️️ 2. จำลอง Payoff รายวัน")
+st.subheader("⏱ 2. จำลอง Payoff รายวัน")
 sim_date = st.date_input("เลือกวันที่จำลอง", value=date.today())
 sim_date_str = str(sim_date)
 

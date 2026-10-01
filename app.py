@@ -118,14 +118,11 @@ def load_trades_from_file(file_name):
     return pd.DataFrame(columns=expected_cols)
 
 def save_trades_to_file(df, file_name):
-    # บันทึกไฟล์หลัก
     df.to_csv(file_name, index=False)
     
-    # สร้าง Backup อัตโนมัติทุกครั้งที่มีการบันทึก
     backup_path = os.path.join(BACKUP_DIR, f"{file_name}.bak")
     df.to_csv(backup_path, index=False)
     
-    # บันทึกลง Archive
     if os.path.exists(ARCHIVE_FILE):
         df_arch = pd.read_csv(ARCHIVE_FILE)
     else:
@@ -255,11 +252,10 @@ available_portfolios = get_available_portfolios()
 selected_portfolio_tab = st.sidebar.selectbox("เลือกพอร์ต", available_portfolios)
 active_portfolio = selected_portfolio_tab
 
-# --- ระบบดาวน์โหลด/อัปโหลดไฟล์ CSV เพื่อความปลอดภัยสูงสุด ---
+# --- ระบบจัดการไฟล์อัปโหลดพร้อมปุ่มยืนยันและตั้งชื่อพอร์ตปลายทาง ---
 st.sidebar.markdown("---")
-st.sidebar.subheader("💾 สำรอง / กู้คืนข้อมูลพอร์ต")
+st.sidebar.subheader("💾 สำรอง / กู้คืน / นำเข้าไฟล์พอร์ต")
 
-# โหลดข้อมูลปัจจุบันของพอร์ตที่เลือกมาทำปุ่มดาวน์โหลด
 current_df_for_download = load_trades_from_file(active_portfolio)
 csv_bytes = current_df_for_download.to_csv(index=False).encode('utf-8')
 st.sidebar.download_button(
@@ -267,22 +263,39 @@ st.sidebar.download_button(
     data=csv_bytes,
     file_name=active_portfolio,
     mime="text/csv",
-    help="ดาวน์โหลดไฟล์ CSV นี้เก็บไว้ในเครื่องคอมพิวเตอร์ของคุณเพื่อความปลอดภัย"
+    help="ดาวน์โหลดไฟล์ CSV นี้เก็บไว้ในเครื่องคอมพิวเตอร์ของคุณ"
 )
 
-uploaded_file = st.sidebar.file_uploader(f"📤 อัปโหลดไฟล์เพื่อกู้คืนพอร์ต (`{active_portfolio}`)", type=["csv"])
+st.sidebar.markdown("---")
+uploaded_file = st.sidebar.file_uploader("📤 อัปโหลดไฟล์พอร์ตจากเครื่อง", type=["csv"], help="เลือกไฟล์ CSV ที่เคยดาวน์โหลดไว้เพื่อนำเข้าสู่ระบบ")
+
 if uploaded_file is not None:
-    try:
-        uploaded_df = pd.read_csv(uploaded_file)
-        save_trades_to_file(uploaded_df, active_portfolio)
-        st.sidebar.success("กู้คืนและบันทึกข้อมูลจากไฟล์สำเร็จ!")
-        st.rerun()
-    except Exception as e:
-        st.sidebar.error(f"เกิดข้อผิดพลาดในการอ่านไฟล์: {e}")
+    st.sidebar.info("📂 ตรวจพบไฟล์ที่อัปโหลด กรุณาระบุชื่อพอร์ตปลายทางด้านล่างเพื่อยืนยันการนำเข้า")
+    import_target_name = st.sidebar.text_input("ตั้งชื่อไฟล์พอร์ตปลายทาง (เช่น my_imported_port.csv)", value=uploaded_file.name)
+    
+    col_imp1, col_imp2 = st.sidebar.columns(2)
+    with col_imp1:
+        if st.button("✅ ยืนยันนำเข้าไฟล์นี้"):
+            if import_target_name:
+                if not import_target_name.endswith(".csv"):
+                    import_target_name += ".csv"
+                try:
+                    uploaded_file.seek(0)
+                    imported_df = pd.read_csv(uploaded_file)
+                    save_trades_to_file(imported_df, import_target_name)
+                    st.sidebar.success(f"นำเข้าและบันทึกข้อมูลลงพอร์ต `{import_target_name}` สำเร็จ!")
+                    st.rerun()
+                except Exception as e:
+                    st.sidebar.error(f"เกิดข้อผิดพลาดในการอ่านไฟล์: {e}")
+            else:
+                st.sidebar.warning("กรุณาตั้งชื่อไฟล์ปลายทางก่อน")
+    with col_imp2:
+        if st.button("❌ ยกเลิก"):
+            st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("➕ สร้างพอร์ตใหม่")
-new_port_name = st.sidebar.text_input("ชื่อไฟล์พอร์ตใหม่ (เช่น portfolio_4.csv)")
+new_port_name = st.sidebar.text_input("ชื่อไฟล์พอร์ตใหม่ (เช่น portfolio_4.csv หรือ my_strategy.csv)")
 if st.sidebar.button("สร้างพอร์ต"):
     if new_port_name:
         if not new_port_name.endswith(".csv"):
@@ -365,7 +378,7 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
     trade_date = st.date_input("วันที่ซื้อ", value=date.today())
     expiry_date = st.date_input("วันหมดอายุ", value=date.today() + timedelta(days=30))
     
-    confirm_add = st.checkbox("☑️ ยืนยันข้อมูล", value=False)
+    confirm_add = st.checkbox("☑️️ ยืนยันข้อมูล", value=False)
     submitted = st.form_submit_button("บันทึกสัญญา")
     
     if submitted:
@@ -679,7 +692,7 @@ st.markdown("<br><br>", unsafe_allow_html=True)
 # ==========================================
 # กราฟที่ 2 & 3: Time Decay Simulation & Greeks
 # ==========================================
-st.subheader("⏱️ 2. จำลอง Payoff รายวัน")
+st.subheader("⏱️️ 2. จำลอง Payoff รายวัน")
 sim_date = st.date_input("เลือกวันที่จำลอง", value=date.today())
 sim_date_str = str(sim_date)
 

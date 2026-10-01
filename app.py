@@ -347,11 +347,13 @@ contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
 trades_df = load_trades_from_file(active_portfolio)
 
-# --- สร้างรายการ Strike อัตโนมัติตามตลาด (สำหรับแสดงเป็นข้อมูลอ้างอิง) ---
+# --- สร้างรายการ Strike อัตโนมัติตามตลาด (สำหรับให้ผู้ใช้เลือกหรือพิมพ์ทับได้อิสระ) ---
 if selected_market == "TFEX USD/THB":
     base_strike_list = [round(round(spot_price / 0.25) * 0.25 + i * 0.25, 2) for i in range(-5, 6)]
+    strike_options = [float(round(s, 2)) for s in base_strike_list]
 else:
     base_strike_list = [int(round(spot_price / 10.0) * 10.0 + i * 10) for i in range(-10, 11)]
+    strike_options = [float(s) for s in base_strike_list]
 
 current_year = date.today().year
 short_year = str(current_year)[-2:]
@@ -361,7 +363,7 @@ month_codes = ["H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]
 
 generated_series_options = [f"{prefix_code}{m}{yr}" for yr in [short_year, next_short_year] for m in month_codes]
 
-# --- ฟอร์มเพิ่มสัญญา (ช่อง Strike เป็นช่องเดี่ยว พิมพ์ตัวเลขเองได้อิสระ ไม่บังคับเลือกจาก Dropdown และเว้นว่างเริ่มต้น) ---
+# --- ฟอร์มเพิ่มสัญญา (ใช้ st.text_input ร่วมกับการแปลงค่า เพื่อให้พิมพ์ตัวเลขใดๆ ได้อย่างอิสระและเริ่มต้นว่างเปล่า) ---
 st.sidebar.subheader("➕ เพิ่มสัญญาใหม่")
 if "form_key" not in st.session_state:
     st.session_state["form_key"] = 0
@@ -372,17 +374,11 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
     position_status = st.selectbox("สถานะ", options=["Open", "Close"], index=0)
     position_type = st.selectbox("ประเภท", options=["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"], index=0)
     
-    # ใช้ st.number_input ที่กำหนดค่า value=None เพื่อให้ช่องว่างเปล่าเริ่มต้น และสามารถพิมพ์ตัวเลขอิสระได้ทันที
-    strike = st.number_input(
-        "Strike Price (พิมพ์ตัวเลขเองได้อิสระ หรือดูราคาอ้างอิงด้านล่าง)",
-        value=None,
-        format="%.4f",
-        placeholder="ระบุ Strike Price..."
-    )
+    # แสดงตัวเลือกอ้างอิงให้ผู้ใช้ทราบเพื่อความสะดวกในการคัดลอกหรือดูค่า
+    st.markdown(f"<span style='font-size: 11px; color: gray;'>ราคาอ้างอิง Strike ใกล้เคียง: {', '.join([str(s) for s in strike_options[:7]])} ...</span>", unsafe_allow_html=True)
     
-    # แสดงรายการราคาอ้างอิงอัตโนมัติไว้เป็นแนวทางให้ผู้ใช้เห็น
-    ref_str_display = ", ".join([str(s) for s in base_strike_list[:8]])
-    st.markdown(f"<small style='color: #666;'>💡 ราคาอ้างอิงรอบ Spot: {ref_str_display}...</small>", unsafe_allow_html=True)
+    # ช่องกรอก Strike แบบอิสระ (เริ่มต้นปล่อยว่างเปล่าตามต้องการ พิมพ์ตัวเลขใดๆ ได้ทันที)
+    strike_input_str = st.text_input("Strike Price (พิมพ์ตัวเลขที่ต้องการได้อิสระ)", value="", placeholder="เช่น 950 หรือ 925.5")
 
     premium = st.number_input("ราคาพรีเมี่ยม", value=0.0, format="%.2f")
     contracts = st.number_input("จำนวนสัญญา", value=1, min_value=1, step=1)
@@ -397,21 +393,28 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
     if submitted:
         if not confirm_add:
             st.sidebar.error("โปรดติ๊กยืนยันข้อมูล")
-        elif strike is None:
+        elif not strike_input_str.strip():
             st.sidebar.error("โปรดระบุ Strike Price")
         else:
-            new_id = int(trades_df["ID"].max() + 1) if not trades_df.empty and "ID" in trades_df.columns and not pd.isna(trades_df["ID"].max()) else 1
-            new_row = pd.DataFrame([{
-                "ID": new_id, "Market": selected_market, "Strategy": strategy_name if strategy_name else "Strategy #1", 
-                "Series": series_name, "Type": position_type, "Status": position_status, 
-                "Strike": float(strike), "Premium": premium, "Contracts": contracts, "Commission": commission, 
-                "TradeDate": str(trade_date), "ExpiryDate": str(expiry_date), "EntrySpot": spot_price
-            }])
-            trades_df = pd.concat([trades_df, new_row], ignore_index=True)
-            save_trades_to_file(trades_df, active_portfolio)
-            st.sidebar.success("บันทึกสำเร็จ!")
-            st.session_state["form_key"] += 1
-            st.rerun()
+            try:
+                strike_val = float(strike_input_str.strip())
+            except ValueError:
+                st.sidebar.error("รูปแบบ Strike Price ไม่ถูกต้อง กรุณากรอกเป็นตัวเลข")
+                strike_val = None
+                
+            if strike_val is not None:
+                new_id = int(trades_df["ID"].max() + 1) if not trades_df.empty and "ID" in trades_df.columns and not pd.isna(trades_df["ID"].max()) else 1
+                new_row = pd.DataFrame([{
+                    "ID": new_id, "Market": selected_market, "Strategy": strategy_name if strategy_name else "Strategy #1", 
+                    "Series": series_name, "Type": position_type, "Status": position_status, 
+                    "Strike": float(strike_val), "Premium": premium, "Contracts": contracts, "Commission": commission, 
+                    "TradeDate": str(trade_date), "ExpiryDate": str(expiry_date), "EntrySpot": spot_price
+                }])
+                trades_df = pd.concat([trades_df, new_row], ignore_index=True)
+                save_trades_to_file(trades_df, active_portfolio)
+                st.sidebar.success("บันทึกสำเร็จ!")
+                st.session_state["form_key"] += 1
+                st.rerun()
 
 # --- ตารางแก้ไขข้อมูล ---
 st.subheader(f"📋 จัดการข้อมูลพอร์ต: `{active_portfolio}`")
@@ -492,6 +495,7 @@ if not market_trades.empty:
         open_cnt = sub_df[sub_df["Status"] == "Open"]["Contracts"].sum() if not sub_df.empty else 0
         close_cnt = sub_df[sub_df["Status"] == "Close"]["Contracts"].sum() if not sub_df.empty else 0
         
+        # กำหนดสไตล์ป้ายสี
         badge_class = "badge-long-fu"
         if "Short Futures" in t_item: badge_class = "badge-short-fu"
         elif "Long Call" in t_item: badge_class = "badge-long-call"
@@ -544,6 +548,7 @@ if not market_trades.empty:
         else:
             item_pnl = 0
 
+        # ใส่ป้ายสัญลักษณ์สีไม่ฉูดฉาดตามประเภท
         badge_class = "badge-long-fu"
         if "Short Futures" in p_type: badge_class = "badge-short-fu"
         elif "Long Call" in p_type: badge_class = "badge-long-call"

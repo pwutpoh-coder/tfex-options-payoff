@@ -347,15 +347,15 @@ contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
 trades_df = load_trades_from_file(active_portfolio)
 
-# --- สร้างรายการ Strike อัตโนมัติตามตลาด (ใช้ st.selectbox แบบรองรับการพิมพ์ค่าอิสระได้ในช่องเดียวกัน) ---
+# --- สร้างรายการ Strike อัตโนมัติตามตลาดสำหรับ Combobox ---
 if selected_market == "TFEX USD/THB":
-    base_strike_list = [round(round(spot_price / 0.25) * 0.25 + i * 0.25, 2) for i in range(-5, 6)]
-    default_strike_str = f"{round(spot_price, 2):.2f}"
+    base_strike_list = [round(round(spot_price / 0.25) * 0.25 + i * 0.25, 2) for i in range(-10, 11)]
+    default_strike_val = float(round(spot_price, 2))
+    strike_format = "%.2f"
 else:
-    base_strike_list = [int(round(spot_price / 10.0) * 10.0 + i * 10) for i in range(-10, 11)]
-    default_strike_str = f"{int(round(spot_price))}"
-
-strike_options = [f"{s:.2f}" if selected_market == "TFEX USD/THB" else f"{s}" for s in base_strike_list]
+    base_strike_list = [int(round(spot_price / 10.0) * 10.0 + i * 10) for i in range(-15, 16)]
+    default_strike_val = float(round(spot_price, 0))
+    strike_format = "%.2f"
 
 current_year = date.today().year
 short_year = str(current_year)[-2:]
@@ -365,7 +365,7 @@ month_codes = ["H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]
 
 generated_series_options = [f"{prefix_code}{m}{yr}" for yr in [short_year, next_short_year] for m in month_codes]
 
-# --- ฟอร์มเพิ่มสัญญา (รวมช่องเลือกและพิมพ์ Strike เป็นช่องเดียวกัน) ---
+# --- ฟอร์มเพิ่มสัญญา (รวมช่องเลือกจากราคาอ้างอิงและพิมพ์เองเป็นช่องเดียวกันด้วย st.selectbox ที่รองรับการพิมพ์หรือ st.text_input/st.selectbox ผสม) ---
 st.sidebar.subheader("➕ เพิ่มสัญญาใหม่")
 if "form_key" not in st.session_state:
     st.session_state["form_key"] = 0
@@ -376,19 +376,14 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
     position_status = st.selectbox("สถานะ", options=["Open", "Close"], index=0)
     position_type = st.selectbox("ประเภท", options=["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"], index=0)
     
-    # รวมช่องเลือกจากราคาอัตโนมัติและช่องพิมพ์เองไว้ใน selectbox เดียวกัน (Streamlit อนุญาตให้พิมพ์ค่าใหม่ลงไปได้เลย)
-    strike_input_val = st.selectbox(
-        "Strike Price (เลือกจากระดับราคา หรือพิมพ์ตัวเลขราคาที่ต้องการเอง)", 
-        options=strike_options, 
-        index=len(strike_options)//2 if len(strike_options) > 0 else 0,
-        help="สามารถคลิกเลือกจากรายการ หรือคลิกแล้วพิมพ์ตัวเลขราคา Strike ตามต้องการได้ทันที"
-    )
+    # รวมช่อง Strike Price ให้เลือกจาก Dropdown หรือพิมพ์ตัวเลขแก้ไขเองได้ในช่องเดียวกัน (Streamlit st.selectbox หรือ st.text_input ควบคู่กัน)
+    # เพื่อให้พิมพ์อิสระและมีค่าจาก Dropdown ให้เลือกใช้งานได้สะดวก ใช้การผสมผสานระหว่าง Selectbox และ Number_input หรือให้เลือกจาก list ที่มีช่องกรอกอิสระ
+    st.markdown("🎯 **Strike Price** (เลือกจากรายการ หรือพิมพ์ราคาที่ต้องการ)")
+    strike_choice = st.selectbox("เลือกจากระดับราคาอ้างอิงอัตโนมัติ", options=base_strike_list, index=len(base_strike_list)//2)
+    custom_strike = st.number_input("หรือพิมพ์ระบุ Strike Price เองตามต้องการ", value=float(strike_choice), format="%.2f")
     
-    # แปลงค่า Strike ที่ผู้ใช้เลือกหรือพิมพ์เข้ามาให้อยู่ในรูปตัวเลขทศนิยม
-    try:
-        strike = float(strike_input_val)
-    except:
-        strike = float(spot_price)
+    # หากมีการพิมพ์ในช่อง custom_strike ให้ใช้ค่านั้นเป็นหลัก ถ้าไม่ได้เปลี่ยนให้ใช้จาก selectbox
+    strike = custom_strike
 
     premium = st.number_input("ราคาพรีเมี่ยม", value=0.0, format="%.2f")
     contracts = st.number_input("จำนวนสัญญา", value=1, min_value=1, step=1)
@@ -496,7 +491,11 @@ if not market_trades.empty:
         open_cnt = sub_df[sub_df["Status"] == "Open"]["Contracts"].sum() if not sub_df.empty else 0
         close_cnt = sub_df[sub_df["Status"] == "Close"]["Contracts"].sum() if not sub_df.empty else 0
         
-        # กำหนดสไตล์ป้ายสี
+        if "Long" in t_item:
+            net_open = sub_df[(sub_df["Status"] == "Open")]["Contracts"].sum() if not sub_df.empty else 0
+        else:
+            net_open = sub_df[(sub_df["Status"] == "Open")]["Contracts"].sum() if not sub_df.empty else 0
+
         badge_class = "badge-long-fu"
         if "Short Futures" in t_item: badge_class = "badge-short-fu"
         elif "Long Call" in t_item: badge_class = "badge-long-call"
@@ -549,7 +548,6 @@ if not market_trades.empty:
         else:
             item_pnl = 0
 
-        # ใส่ป้ายสัญลักษณ์สีไม่ฉูดฉาดตามประเภท
         badge_class = "badge-long-fu"
         if "Short Futures" in p_type: badge_class = "badge-short-fu"
         elif "Long Call" in p_type: badge_class = "badge-long-call"
@@ -658,7 +656,6 @@ if not market_trades.empty:
             hovertemplate=f"<b>{row['Strategy']}</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
         ))
 
-# Break-even
 be_points = []
 for j in range(len(price_range) - 1):
     if total_payoff[j] * total_payoff[j+1] < 0:
@@ -671,7 +668,6 @@ max_pnl_val, price_at_max = total_payoff[np.argmax(total_payoff)], price_range[n
 min_pnl_val, price_at_min = total_payoff[np.argmin(total_payoff)], price_range[np.argmin(total_payoff)]
 unit_label = "บาท" if payoff_mode == "บาทรวม (THB)" else "จุด"
 
-# --- สรุปสถิติความเสี่ยง ---
 st.markdown("#### 🎯 สรุปความเสี่ยง (Max / Min & Boundaries)")
 sc1, sc2, sc3, sc4 = st.columns(4)
 

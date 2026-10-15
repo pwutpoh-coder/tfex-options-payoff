@@ -51,7 +51,7 @@ if not os.path.exists(BACKUP_DIR):
 def init_archive_file():
     expected_cols = [
         "ID", "Market", "Strategy", "Series", "Type", "Status", 
-        "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot", "PortfolioSource", "SavedAt"
+        "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot", "RefID", "PortfolioSource", "SavedAt"
     ]
     if not os.path.exists(ARCHIVE_FILE):
         df_arch = pd.DataFrame(columns=expected_cols)
@@ -67,7 +67,7 @@ def get_available_portfolios():
             if not os.path.exists(df_file):
                 empty_df = pd.DataFrame(columns=[
                     "ID", "Market", "Strategy", "Series", "Type", "Status", 
-                    "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot"
+                    "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot", "RefID"
                 ])
                 empty_df.to_csv(df_file, index=False)
         files = default_files
@@ -100,7 +100,7 @@ def get_portfolio_summary():
 def load_trades_from_file(file_name):
     expected_cols = [
         "ID", "Market", "Strategy", "Series", "Type", "Status", 
-        "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot"
+        "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot", "RefID"
     ]
     if os.path.exists(file_name):
         try:
@@ -114,9 +114,9 @@ def load_trades_from_file(file_name):
                     df[col] = "Open"
                 elif col in ["TradeDate", "ExpiryDate"]:
                     df[col] = str(date.today())
-                elif col == "EntrySpot":
+                elif col in ["EntrySpot", "Strike", "Premium", "Commission"]:
                     df[col] = 0.0
-                elif col in ["Strike", "Premium", "Contracts", "Commission", "ID"]:
+                elif col in ["Contracts", "ID", "RefID"]:
                     df[col] = 0
                 else:
                     df[col] = "N/A"
@@ -309,7 +309,7 @@ if st.sidebar.button("สร้างพอร์ต"):
         if not os.path.exists(new_port_name):
             empty_df = pd.DataFrame(columns=[
                 "ID", "Market", "Strategy", "Series", "Type", "Status", 
-                "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot"
+                "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot", "RefID"
             ])
             save_trades_to_file(empty_df, new_port_name)
             st.sidebar.success("สร้างสำเร็จ!")
@@ -355,7 +355,7 @@ month_codes = ["H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]
 
 generated_series_options = [f"{prefix_code}{m}{yr}" for yr in [short_year, next_short_year] for m in month_codes]
 
-# --- ฟอร์มเพิ่มสัญญา (ช่อง Strike Price เป็นแบบพิมพ์อิสระ ปล่อยว่างเริ่มต้นได้ทันที) ---
+# --- ฟอร์มเพิ่มสัญญา (พร้อมเลือก RefID กรณีสถานะเป็น Close) ---
 st.sidebar.subheader("➕ เพิ่มสัญญาใหม่")
 if "form_key" not in st.session_state:
     st.session_state["form_key"] = 0
@@ -366,6 +366,16 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
     position_status = st.selectbox("สถานะ", options=["Open", "Close"], index=0)
     position_type = st.selectbox("ประเภท", options=["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"], index=0)
     
+    # ช่องกรอก RefID หากเลือก Close เพื่อเลือกจับคู่กับรายการ Open
+    ref_id_input = 0
+    if position_status == "Close":
+        open_list = trades_df[trades_df["Status"] == "Open"]
+        if not open_list.empty:
+            open_ids = open_list["ID"].tolist()
+            ref_id_input = st.selectbox("จับคู่ปิดกับ Open ID", options=open_ids)
+        else:
+            st.warning("ยังไม่มีสถานะ Open ในพอร์ตสำหรับจับคู่ปิด")
+            
     strike_input_str = st.text_input("Strike Price", value="", placeholder="เช่น 950 หรือ 33.5")
 
     premium = st.number_input("ราคาพรีเมี่ยม / ราคาปิด", value=0.0, format="%.2f")
@@ -396,7 +406,7 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
                     "ID": new_id, "Market": selected_market, "Strategy": strategy_name if strategy_name else "Strategy #1", 
                     "Series": series_name, "Type": position_type, "Status": position_status, 
                     "Strike": float(strike_val), "Premium": premium, "Contracts": contracts, "Commission": commission, 
-                    "TradeDate": str(trade_date), "ExpiryDate": str(expiry_date), "EntrySpot": spot_price
+                    "TradeDate": str(trade_date), "ExpiryDate": str(expiry_date), "EntrySpot": spot_price, "RefID": int(ref_id_input) if position_status == "Close" else 0
                 }])
                 trades_df = pd.concat([trades_df, new_row], ignore_index=True)
                 save_trades_to_file(trades_df, active_portfolio)
@@ -511,82 +521,82 @@ else:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- ตารางสรุป P&L พร้อมจับคู่ Open / Close และแยกส่วนแสดงผลอย่างแม่นยำ ---
+# --- ตารางสรุป P&L พร้อมแยกส่วนที่เปิดอยู่และส่วนที่ปิดไปแล้ว (Partial Close & Remaining Open) ---
 st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน")
 total_pnl_sum = 0.0
 if not market_trades.empty:
     summary_list = []
     
-    # คำนวณจับคู่สัญญา Open และ Close แยกตามกลุ่ม (Series, Strike, Type) เพื่อสร้างตารางย่อยส่วนที่ปิดและเหลือเปิด
-    groups = market_trades.groupby(["Series", "Strike", "Type", "Strategy", "Source_Portfolio"])
+    open_trades_df = market_trades[market_trades["Status"] == "Open"]
+    close_trades_df = market_trades[market_trades["Status"] == "Close"]
     
-    for name, group in groups:
-        ser, stk, p_type, strat, p_src = name
-        open_group = group[group["Status"] == "Open"]
-        close_group = group[group["Status"] == "Close"]
+    # วนลูปประมวลผลแต่ละรายการ Open และแยกการปิดบางส่วน (Partial Close)
+    for _, open_row in open_trades_df.iterrows():
+        p_src = open_row.get("Source_Portfolio", active_portfolio)
+        open_id = open_row["ID"]
+        ser, stk, p_type = open_row["Series"], float(open_row["Strike"]), open_row["Type"]
+        open_qty, prem = int(open_row["Contracts"]), float(open_row["Premium"])
+        comm_unit = float(open_row["Commission"])
         
-        total_open_contracts = open_group["Contracts"].sum() if not open_group.empty else 0
-        total_close_contracts = close_group["Contracts"].sum() if not close_group.empty else 0
+        # ค้นหาว่ามีรายการ Close ไหนที่จับคู่กับ Open ID นี้บ้าง (ผ่าน RefID หรือ Fallback จับคู่ตาม Series/Strike/Type)
+        matching_closes = close_trades_df[(close_trades_df["RefID"] == open_id) | 
+                                          ((close_trades_df["RefID"] == 0) & 
+                                           (close_trades_df["Series"] == ser) & 
+                                           (close_trades_df["Strike"] == stk) & 
+                                           (close_trades_df["Type"] == p_type))]
         
-        avg_entry_prem = open_group["Premium"].mean() if not open_group.empty else 0
-        avg_comm = group["Commission"].mean() if not group.empty else 0
+        closed_qty = matching_closes["Contracts"].sum() if not matching_closes.empty else 0
+        rem_qty = max(0, open_qty - closed_qty)
         
-        # 1. ส่วนที่ปิดไปแล้ว (Closed Part)
-        if total_close_contracts > 0:
-            closed_qty = min(total_open_contracts, total_close_contracts)
-            avg_close_prem = close_group["Premium"].mean() if not close_group.empty else 0
-            mult_qty = closed_qty * contract_multiplier
-            comm_val = avg_comm * closed_qty
-            
-            if "Long" in p_type:
-                closed_pnl = ((avg_close_prem - avg_entry_prem) * mult_qty) - comm_val
-            else:
-                closed_pnl = ((avg_entry_prem - avg_close_prem) * mult_qty) - comm_val
-                
-            badge_class = "badge-long-fu"
-            if "Short Futures" in p_type: badge_class = "badge-short-fu"
-            elif "Long Call" in p_type: badge_class = "badge-long-call"
-            elif "Short Call" in p_type: badge_class = "badge-short-call"
-            elif "Long Put" in p_type: badge_class = "badge-long-put"
-            elif "Short Put" in p_type: badge_class = "badge-short-put"
-            
-            summary_list.append({
-                "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": f'<span class="{badge_class}">{p_type}</span>',
-                "สถานะ": "Close (ส่วนที่ปิด)", "สัญญา": -closed_qty, "P&L (บาท)": round(closed_pnl, 2)
-            })
-            
-        # 2. ส่วนที่ยังเปิดอยู่ (Net Open Part)
-        net_open_contracts = total_open_contracts - total_close_contracts
-        if net_open_contracts > 0:
-            mult_qty = net_open_contracts * contract_multiplier
-            comm_val = avg_comm * net_open_contracts
-            
+        badge_class = "badge-long-fu"
+        if "Short Futures" in p_type: badge_class = "badge-short-fu"
+        elif "Long Call" in p_type: badge_class = "badge-long-call"
+        elif "Short Call" in p_type: badge_class = "badge-short-call"
+        elif "Long Put" in p_type: badge_class = "badge-long-put"
+        elif "Short Put" in p_type: badge_class = "badge-short-put"
+        type_badge_html = f'<span class="{badge_class}">{p_type}</span>'
+        
+        # 1. ส่วนที่ยังเปิดอยู่ (Remaining Open) - วิ่งตามราคา Spot
+        if rem_qty > 0:
+            mult_qty = rem_qty * contract_multiplier
+            comm_rem = comm_unit * rem_qty
             if p_type == "Long Futures":
-                open_pnl = (spot_price - stk) * mult_qty - comm_val
+                rem_pnl = (spot_price - stk) * mult_qty - comm_rem
             elif p_type == "Short Futures":
-                open_pnl = (stk - spot_price) * mult_qty - comm_val
+                rem_pnl = (stk - spot_price) * mult_qty - comm_rem
             elif p_type == "Long Call Option":
-                open_pnl = (np.maximum(0, spot_price - stk) - avg_entry_prem) * mult_qty - comm_val
+                rem_pnl = (np.maximum(0, spot_price - stk) - prem) * mult_qty - comm_rem
             elif p_type == "Short Call Option":
-                open_pnl = (avg_entry_prem - np.maximum(0, spot_price - stk)) * mult_qty - comm_val
+                rem_pnl = (prem - np.maximum(0, spot_price - stk)) * mult_qty - comm_rem
             elif p_type == "Long Put Option":
-                open_pnl = (np.maximum(0, stk - spot_price) - avg_entry_prem) * mult_qty - comm_val
+                rem_pnl = (np.maximum(0, stk - spot_price) - prem) * mult_qty - comm_rem
             elif p_type == "Short Put Option":
-                open_pnl = (avg_entry_prem - np.maximum(0, stk - spot_price)) * mult_qty - comm_val
+                rem_pnl = (prem - np.maximum(0, stk - spot_price)) * mult_qty - comm_rem
             else:
-                open_pnl = 0
+                rem_pnl = 0
                 
-            badge_class = "badge-long-fu"
-            if "Short Futures" in p_type: badge_class = "badge-short-fu"
-            elif "Long Call" in p_type: badge_class = "badge-long-call"
-            elif "Short Call" in p_type: badge_class = "badge-short-call"
-            elif "Long Put" in p_type: badge_class = "badge-long-put"
-            elif "Short Put" in p_type: badge_class = "badge-short-put"
-            
             summary_list.append({
-                "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": f'<span class="{badge_class}">{p_type}</span>',
-                "สถานะ": "Open (คงเหลือ)", "สัญญา": net_open_contracts, "P&L (บาท)": round(open_pnl, 2)
+                "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
+                "สถานะ": f"Open (ID: {open_id})", "สัญญา": rem_qty, "P&L (บาท)": round(rem_pnl, 2)
             })
+            
+        # 2. ส่วนที่ปิดไปแล้ว (Closed Parts) - กำไร/ขาดทุนคงที่
+        if not matching_closes.empty:
+            for _, c_row in matching_closes.iterrows():
+                c_qty = int(c_row["Contracts"])
+                c_prem = float(c_row["Premium"])
+                c_comm = comm_unit * c_qty
+                mult_c = c_qty * contract_multiplier
+                
+                if "Long" in p_type:
+                    c_pnl = ((c_prem - prem) * mult_c) - c_comm
+                else:
+                    c_pnl = ((prem - c_prem) * mult_c) - c_comm
+                    
+                summary_list.append({
+                    "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
+                    "สถานะ": f"Close (Ref ID: {open_id})", "สัญญา": -c_qty, "P&L (บาท)": round(c_pnl, 2)
+                })
 
     summary_df = pd.DataFrame(summary_list)
     if not summary_df.empty:
@@ -623,7 +633,7 @@ if not journal_df.empty:
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 1: Net Expiry Payoff (คำนวณแยกส่วน Open และ Close ที่สอดคล้องกัน)
+# กราฟที่ 1: Net Expiry Payoff (คำนวณแยก Open ที่เหลือ และ Closed ที่ล็อก P&L)
 # ==========================================
 st.subheader(f"📈 1. Payoff รวมวันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วยแสดงผล", ["บาทรวม (THB)", "จุด (Points)"])
@@ -636,79 +646,88 @@ today = date.today()
 fig = go.Figure()
 
 if not market_trades.empty:
-    groups = market_trades.groupby(["Series", "Strike", "Type", "Strategy"])
-    for name, group in groups:
-        ser, stk, p_type, strat = name
-        open_group = group[group["Status"] == "Open"]
-        close_group = group[group["Status"] == "Close"]
-        
-        total_open_contracts = open_group["Contracts"].sum() if not open_group.empty else 0
-        total_close_contracts = close_group["Contracts"].sum() if not close_group.empty else 0
-        avg_entry_prem = open_group["Premium"].mean() if not open_group.empty else 0
-        avg_comm = group["Commission"].mean() if not group.empty else 0
+    open_trades_df = market_trades[market_trades["Status"] == "Open"]
+    close_trades_df = market_trades[market_trades["Status"] == "Close"]
+    
+    for _, open_row in open_trades_df.iterrows():
+        open_id = open_row["ID"]
+        p_type, stk, prem = open_row["Type"], float(open_row["Strike"]), float(open_row["Premium"])
+        open_qty = int(open_row["Contracts"])
+        comm_unit = float(open_row["Commission"])
         
         try:
-            T = max((datetime.strptime(str(group["ExpiryDate"].iloc[0]), "%Y-%m-%d").date() - today).days, 0) / 365.0
+            T = max((datetime.strptime(str(open_row["ExpiryDate"]), "%Y-%m-%d").date() - today).days, 0) / 365.0
         except:
             T = 30 / 365.0
-
-        group_payoff = np.zeros_like(price_range)
+            
+        matching_closes = close_trades_df[(close_trades_df["RefID"] == open_id) | 
+                                          ((close_trades_df["RefID"] == 0) & 
+                                           (close_trades_df["Series"] == open_row["Series"]) & 
+                                           (close_trades_df["Strike"] == stk) & 
+                                           (close_trades_df["Type"] == p_type))]
         
-        # 1. ส่วนที่ปิดไปแล้ว (สร้างเส้นตรงคงที่ Realized P&L ไม่ขยับตาม Spot)
-        if total_close_contracts > 0:
-            closed_qty = min(total_open_contracts, total_close_contracts)
-            avg_close_prem = close_group["Premium"].mean() if not close_group.empty else 0
-            mult_qty = (closed_qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else closed_qty)
-            comm_val = (avg_comm * closed_qty) if payoff_mode == "บาทรวม (THB)" else ((avg_comm * closed_qty) / contract_multiplier)
+        closed_qty = matching_closes["Contracts"].sum() if not matching_closes.empty else 0
+        rem_qty = max(0, open_qty - closed_qty)
+        
+        # 1. ส่วนที่เหลือ Open อยู่ (Payoff เคลื่อนไหวตามราคาอ้างอิง)
+        if rem_qty > 0:
+            mult_qty = (rem_qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else rem_qty)
+            comm_rem = (comm_unit * rem_qty) if payoff_mode == "บาทรวม (THB)" else ((comm_unit * rem_qty) / contract_multiplier)
+            payoff_rem = np.zeros_like(price_range)
             
-            if "Long" in p_type:
-                locked_val = ((avg_close_prem - avg_entry_prem) * mult_qty) - comm_val
-            else:
-                locked_val = ((avg_entry_prem - avg_close_prem) * mult_qty) - comm_val
-                
-            group_payoff += np.full_like(price_range, locked_val)
-
-        # 2. ส่วนที่ยังเปิดอยู่ (สร้างเส้น Payoff วิ่งตาม Spot ปกติ)
-        net_open_contracts = total_open_contracts - total_close_contracts
-        if net_open_contracts > 0:
-            mult_qty = (net_open_contracts * contract_multiplier if payoff_mode == "บาทรวม (THB)" else net_open_contracts)
-            comm_val = (avg_comm * net_open_contracts) if payoff_mode == "บาทรวม (THB)" else ((avg_comm * net_open_contracts) / contract_multiplier)
-            
-            open_payoff = np.zeros_like(price_range)
             if p_type == "Long Futures":
-                open_payoff = (price_range - stk) * mult_qty - comm_val
+                payoff_rem = (price_range - stk) * mult_qty - comm_rem
             elif p_type == "Short Futures":
-                open_payoff = (stk - price_range) * mult_qty - comm_val
+                payoff_rem = (stk - price_range) * mult_qty - comm_rem
             elif p_type == "Long Call Option":
-                open_payoff = (np.maximum(0, price_range - stk) - avg_entry_prem) * mult_qty - comm_val
+                payoff_rem = (np.maximum(0, price_range - stk) - prem) * mult_qty - comm_rem
             elif p_type == "Short Call Option":
-                open_payoff = (avg_entry_prem - np.maximum(0, price_range - stk)) * mult_qty - comm_val
+                payoff_rem = (prem - np.maximum(0, price_range - stk)) * mult_qty - comm_rem
             elif p_type == "Long Put Option":
-                open_payoff = (np.maximum(0, stk - price_range) - avg_entry_prem) * mult_qty - comm_val
+                payoff_rem = (np.maximum(0, stk - price_range) - prem) * mult_qty - comm_rem
             elif p_type == "Short Put Option":
-                open_payoff = (avg_entry_prem - np.maximum(0, stk - price_range)) * mult_qty - comm_val
+                payoff_rem = (prem - np.maximum(0, stk - price_range)) * mult_qty - comm_rem
                 
-            group_payoff += open_payoff
+            total_payoff += payoff_rem
             
-            # คำนวณ Greeks เฉพาะส่วนที่ยัง Open อยู่
             opt_flag = "Call" if "Call" in p_type else ("Put" if "Put" in p_type else None)
             if opt_flag:
                 g = bs_greeks(spot_price, stk, T, risk_free_rate, volatility_input, opt_flag)
                 dir_s = 1 if "Long" in p_type else -1
-                total_greeks["Delta"] += g["Delta"] * net_open_contracts * contract_multiplier * dir_s
-                total_greeks["Gamma"] += g["Gamma"] * net_open_contracts * contract_multiplier * dir_s
-                total_greeks["Theta"] += g["Theta"] * net_open_contracts * dir_s
-                total_greeks["Vega"] += g["Vega"] * net_open_contracts * contract_multiplier * dir_s
+                total_greeks["Delta"] += g["Delta"] * rem_qty * contract_multiplier * dir_s
+                total_greeks["Gamma"] += g["Gamma"] * rem_qty * contract_multiplier * dir_s
+                total_greeks["Theta"] += g["Theta"] * rem_qty * dir_s
+                total_greeks["Vega"] += g["Vega"] * rem_qty * contract_multiplier * dir_s
             else:
-                total_greeks["Delta"] += 1.0 * net_open_contracts * contract_multiplier * (1 if "Long" in p_type else -1)
+                total_greeks["Delta"] += 1.0 * rem_qty * contract_multiplier * (1 if "Long" in p_type else -1)
 
-        total_payoff += group_payoff
+            fig.add_trace(go.Scatter(
+                x=price_range, y=payoff_rem, mode='lines', name=f"{open_row['Strategy']} ({p_type} - Open ID {open_id})",
+                line=dict(dash='dash', width=1), opacity=0.4,
+                hovertemplate=f"<b>{open_row['Strategy']} [Open]</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
+            ))
+            
+        # 2. ส่วนที่ปิดไปแล้ว (Payoff คงที่ ไม่เคลื่อนไหว)
+        if not matching_closes.empty:
+            for _, c_row in matching_closes.iterrows():
+                c_qty = int(c_row["Contracts"])
+                c_prem = float(c_row["Premium"])
+                c_comm = (comm_unit * c_qty) if payoff_mode == "บาทรวม (THB)" else ((comm_unit * c_qty) / contract_multiplier)
+                mult_c = (c_qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else c_qty)
+                
+                if "Long" in p_type:
+                    locked_val = ((c_prem - prem) * mult_c) - c_comm
+                else:
+                    locked_val = ((prem - c_prem) * mult_c) - c_comm
+                    
+                payoff_closed = np.full_like(price_range, locked_val)
+                total_payoff += payoff_closed
 
-        fig.add_trace(go.Scatter(
-            x=price_range, y=group_payoff, mode='lines', name=f"{strat} ({p_type})",
-            line=dict(dash='dash', width=1), opacity=0.4,
-            hovertemplate=f"<b>{strat}</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
-        ))
+                fig.add_trace(go.Scatter(
+                    x=price_range, y=payoff_closed, mode='lines', name=f"{open_row['Strategy']} ({p_type} - Closed)",
+                    line=dict(dash='dot', width=1), opacity=0.3,
+                    hovertemplate=f"<b>{open_row['Strategy']} [Closed]</b><br>Locked P&L: %{{y:,.2f}}<extra></extra>"
+                ))
 
 # Break-even
 be_points = []
@@ -830,54 +849,44 @@ if not market_trades.empty:
         day_val = np.zeros_like(price_range)
         has_t = False
         
-        day_trades = market_trades[market_trades["TradeDate"].astype(str) <= t_str]
+        day_trades = market_trades[market_trades["TradeDate"].astype(str) == t_str]
         if not day_trades.empty:
             has_t = True
-            sim_groups = day_trades.groupby(["Series", "Strike", "Type"])
-            for _, s_group in sim_groups:
-                stk = float(s_group["Strike"].iloc[0])
-                p_type = s_group["Type"].iloc[0]
-                open_g = s_group[s_group["Status"] == "Open"]
-                close_g = s_group[s_group["Status"] == "Close"]
-                
-                tot_o = open_g["Contracts"].sum() if not open_g.empty else 0
-                tot_c = close_g["Contracts"].sum() if not close_g.empty else 0
-                avg_e = open_g["Premium"].mean() if not open_g.empty else 0
-                avg_comm = s_group["Commission"].mean() if not s_group.empty else 0
+            for _, row in day_trades.iterrows():
+                p_type, stk, prem, qty, status = row["Type"], float(row["Strike"]), float(row["Premium"]), int(row["Contracts"]), row["Status"]
+                comm_val = (float(row["Commission"]) * qty) if payoff_mode == "บาทรวม (THB)" else ((float(row["Commission"]) * qty) / contract_multiplier)
                 
                 try:
-                    T_sim = max((datetime.strptime(str(s_group["ExpiryDate"].iloc[0]), "%Y-%m-%d").date() - t_d).days, 0) / 365.0
+                    T_sim = max((datetime.strptime(str(row["ExpiryDate"]), "%Y-%m-%d").date() - t_d).days, 0) / 365.0
                 except:
                     T_sim = 30 / 365.0
                     
-                if tot_c > 0:
-                    c_qty = min(tot_o, tot_c)
-                    avg_cl = close_g["Premium"].mean() if not close_g.empty else 0
-                    m_q = (c_qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else c_qty)
-                    c_val = (avg_comm * c_qty) if payoff_mode == "บาทรวม (THB)" else ((avg_comm * c_qty) / contract_multiplier)
-                    if "Long" in p_type:
-                        l_v = ((avg_cl - avg_e) * m_q) - c_val
-                    else:
-                        l_v = ((avg_e - avg_cl) * m_q) - c_val
-                    day_val += np.full_like(price_range, l_v)
-                    
-                net_o = tot_o - tot_c
-                if net_o > 0:
-                    m_q = (net_o * contract_multiplier if payoff_mode == "บาทรวม (THB)" else net_o)
-                    c_val = (avg_comm * net_o) if payoff_mode == "บาทรวม (THB)" else ((avg_comm * net_o) / contract_multiplier)
+                if status == "Open":
+                    mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
                     if p_type == "Long Futures":
-                        v = (price_range - stk) * m_q - c_val
+                        val = (price_range - stk) * mult_qty - comm_val
                     elif p_type == "Short Futures":
-                        v = (stk - price_range) * m_q - c_val
+                        val = (stk - price_range) * mult_qty - comm_val
                     elif "Call" in p_type:
                         opt_v = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Call") for p in price_range])
-                        v = (opt_v - avg_e) * m_q - c_val if "Long" in p_type else (avg_e - opt_v) * m_q - c_val
+                        val = (opt_v - prem) * mult_qty - comm_val if "Long" in p_type else (prem - opt_v) * mult_qty - comm_val
                     elif "Put" in p_type:
                         opt_v = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Put") for p in price_range])
-                        v = (opt_v - avg_e) * m_q - c_val if "Long" in p_type else (avg_e - opt_v) * m_q - c_val
+                        val = (opt_v - prem) * mult_qty - comm_val if "Long" in p_type else (prem - opt_v) * mult_qty - comm_val
                     else:
-                        v = -c_val
-                    day_val += v
+                        val = -comm_val
+                else:
+                    open_id_ref = int(row["RefID"])
+                    matching_open = market_trades[market_trades["ID"] == open_id_ref]
+                    entry_prem = float(matching_open["Premium"].values[0]) if not matching_open.empty else prem
+                    
+                    mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
+                    if "Long" in p_type:
+                        val = np.full_like(price_range, ((prem - entry_prem) * mult_qty) - comm_val)
+                    else:
+                        val = np.full_like(price_range, ((entry_prem - prem) * mult_qty) - comm_val)
+
+                day_val += val
                 
         if has_t:
             is_sel = (t_str == sim_date_str)
@@ -894,51 +903,41 @@ if not market_trades.empty:
         cum_trades = market_trades[market_trades["TradeDate"].astype(str) <= t_str]
         
         if not cum_trades.empty:
-            cum_groups = cum_trades.groupby(["Series", "Strike", "Type"])
-            for _, s_group in cum_groups:
-                stk = float(s_group["Strike"].iloc[0])
-                p_type = s_group["Type"].iloc[0]
-                open_g = s_group[s_group["Status"] == "Open"]
-                close_g = s_group[s_group["Status"] == "Close"]
-                
-                tot_o = open_g["Contracts"].sum() if not open_g.empty else 0
-                tot_c = close_g["Contracts"].sum() if not close_g.empty else 0
-                avg_e = open_g["Premium"].mean() if not open_g.empty else 0
-                avg_comm = s_group["Commission"].mean() if not s_group.empty else 0
+            for _, row in cum_trades.iterrows():
+                p_type, stk, prem, qty, status = row["Type"], float(row["Strike"]), float(row["Premium"]), int(row["Contracts"]), row["Status"]
+                comm_val = (float(row["Commission"]) * qty) if payoff_mode == "บาทรวม (THB)" else ((float(row["Commission"]) * qty) / contract_multiplier)
                 
                 try:
-                    T_sim = max((datetime.strptime(str(s_group["ExpiryDate"].iloc[0]), "%Y-%m-%d").date() - t_d).days, 0) / 365.0
+                    T_sim = max((datetime.strptime(str(row["ExpiryDate"]), "%Y-%m-%d").date() - t_d).days, 0) / 365.0
                 except:
                     T_sim = 30 / 365.0
                     
-                if tot_c > 0:
-                    c_qty = min(tot_o, tot_c)
-                    avg_cl = close_g["Premium"].mean() if not close_g.empty else 0
-                    m_q = (c_qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else c_qty)
-                    c_val = (avg_comm * c_qty) if payoff_mode == "บาทรวม (THB)" else ((avg_comm * c_qty) / contract_multiplier)
-                    if "Long" in p_type:
-                        l_v = ((avg_cl - avg_e) * m_q) - c_val
-                    else:
-                        l_v = ((avg_e - avg_cl) * m_q) - c_val
-                    cum_val += np.full_like(price_range, l_v)
-                    
-                net_o = tot_o - tot_c
-                if net_o > 0:
-                    m_q = (net_o * contract_multiplier if payoff_mode == "บาทรวม (THB)" else net_o)
-                    c_val = (avg_comm * net_o) if payoff_mode == "บาทรวม (THB)" else ((avg_comm * net_o) / contract_multiplier)
+                if status == "Open":
+                    mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
                     if p_type == "Long Futures":
-                        v = (price_range - stk) * m_q - c_val
+                        val = (price_range - stk) * mult_qty - comm_val
                     elif p_type == "Short Futures":
-                        v = (stk - price_range) * m_q - c_val
+                        val = (stk - price_range) * mult_qty - comm_val
                     elif "Call" in p_type:
                         opt_v = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Call") for p in price_range])
-                        v = (opt_v - avg_e) * m_q - c_val if "Long" in p_type else (avg_e - opt_v) * m_q - c_val
+                        val = (opt_v - prem) * mult_qty - comm_val if "Long" in p_type else (prem - opt_v) * mult_qty - comm_val
                     elif "Put" in p_type:
                         opt_v = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Put") for p in price_range])
-                        v = (opt_v - avg_e) * m_q - c_val if "Long" in p_type else (avg_e - opt_v) * m_q - c_val
+                        val = (opt_v - prem) * mult_qty - comm_val if "Long" in p_type else (prem - opt_v) * mult_qty - comm_val
                     else:
-                        v = -c_val
-                    cum_val += v
+                        val = -comm_val
+                else:
+                    open_id_ref = int(row["RefID"])
+                    matching_open = market_trades[market_trades["ID"] == open_id_ref]
+                    entry_prem = float(matching_open["Premium"].values[0]) if not matching_open.empty else prem
+                    
+                    mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
+                    if "Long" in p_type:
+                        val = np.full_like(price_range, ((prem - entry_prem) * mult_qty) - comm_val)
+                    else:
+                        val = np.full_like(price_range, ((entry_prem - prem) * mult_qty) - comm_val)
+
+                cum_val += val
                 
         is_sel = (t_str == sim_date_str)
         fig_daily_cumulative.add_trace(go.Scatter(
@@ -962,7 +961,7 @@ st.markdown(f"### 📋 รายการเทรด ณ หรือก่อ�
 if not market_trades.empty:
     filt_sim = market_trades[market_trades["TradeDate"].astype(str) <= sim_date_str]
     if not filt_sim.empty:
-        st.dataframe(filt_sim[["ID", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "Commission", "TradeDate"]], use_container_width=True)
+        st.dataframe(filt_sim[["ID", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "Commission", "RefID", "TradeDate"]], use_container_width=True)
     else:
         st.info("ไม่มีรายการ")
 

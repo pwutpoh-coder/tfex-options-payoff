@@ -538,6 +538,9 @@ if not market_trades.empty:
     open_trades_df = market_trades[market_trades["Status"] == "Open"]
     close_trades_df = market_trades[market_trades["Status"] == "Close"]
     
+    # สร้างเซטיםเพื่อตรวจสอบ Close รายการใดที่ถูกจับคู่แล้ว
+    matched_close_ids = set()
+    
     for _, open_row in open_trades_df.iterrows():
         p_src = open_row.get("Source_Portfolio", active_portfolio)
         open_id = int(open_row["ID"])
@@ -545,12 +548,17 @@ if not market_trades.empty:
         open_qty, open_prem = int(open_row["Contracts"]), float(open_row["Premium"])
         comm_unit = float(open_row["Commission"])
         
-        # ค้นหาคำสั่ง Close ที่จับคู่กับ Open ID นี้ (ตรวจสอบผ่าน RefID หรือสำรองจับคู่ตาม Series/Strike/Type)
-        matching_closes = close_trades_df[(close_trades_df["RefID"] == open_id) | 
-                                          ((close_trades_df["RefID"] == 0) & 
-                                           (close_trades_df["Series"] == ser) & 
-                                           (close_trades_df["Strike"] == stk) & 
-                                           (close_trades_df["Type"] == p_type))]
+        # ค้นหาคำสั่ง Close ที่จับคู่กับ Open ID นี้ (ตรวจสอบผ่าน RefID หรือสำรองจับคู่ตาม Series/Type/Strike)
+        matching_closes = close_trades_df[
+            (close_trades_df["RefID"] == open_id) | 
+            ((close_trades_df["RefID"] == 0) & 
+             (close_trades_df["Series"] == ser) & 
+             (close_trades_df["Type"] == p_type) & 
+             (('Futures' in p_type) | (close_trades_df["Strike"] == stk)))
+        ]
+        
+        for _, c_item in matching_closes.iterrows():
+            matched_close_ids.add(int(c_item["ID"]))
         
         closed_qty = matching_closes["Contracts"].sum() if not matching_closes.empty else 0
         rem_qty = max(0, open_qty - closed_qty)
@@ -581,7 +589,7 @@ if not market_trades.empty:
             elif p_type == "Short Put Option":
                 rem_pnl = (open_prem - np.maximum(0, stk - spot_price)) * mult_qty - comm_rem
         
-        # กรณีไม่มีการปิดสถานะ (แสดงฝั่งขวาเป็นขีดเส้นใต้ หรือแสดง 0)
+        # กรณีไม่มีการปิดสถานะ (แสดงฝั่งขวาเป็น 0 / ยังไม่มีการปิด)
         if matching_closes.empty:
             summary_list.append({
                 "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
@@ -611,6 +619,34 @@ if not market_trades.empty:
                     "สถานะปิด (Close) [ขวา]": f"ID: {c_id} ({c_qty} สัญญา, ปิดที่ {c_prem})", 
                     "P&L หักล้างสุทธิ (บาท)": round(total_paired_pnl, 2)
                 })
+
+    # จัดการรายการ Close ที่หลงเหลือ (Unmatched Close ที่ไม่มี Open ตรงกัน)
+    unmatched_closes = close_trades_df[~close_trades_df["ID"].isin(matched_close_ids)]
+    for _, c_row in unmatched_closes.iterrows():
+        p_src = c_row.get("Source_Portfolio", active_portfolio)
+        c_id = int(c_row["ID"])
+        ser, stk, p_type = c_row["Series"], float(c_row["Strike"]), c_row["Type"]
+        c_qty = int(c_row["Contracts"])
+        c_prem = float(c_row["Premium"])
+        c_comm = float(c_row["Commission"]) * c_qty
+        mult_c = c_qty * contract_multiplier
+        
+        badge_class = "badge-long-fu"
+        if "Short Futures" in p_type: badge_class = "badge-short-fu"
+        elif "Long Call" in p_type: badge_class = "badge-long-call"
+        elif "Short Call" in p_type: badge_class = "badge-short-call"
+        elif "Long Put" in p_type: badge_class = "badge-long-put"
+        elif "Short Put" in p_type: badge_class = "badge-short-put"
+        type_badge_html = f'<span class="{badge_class}">{p_type}</span>'
+        
+        standalone_pnl = (c_prem * mult_c) - c_comm
+        
+        summary_list.append({
+            "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
+            "สถานะเปิด (Open) [ซ้าย]": "-", 
+            "สถานะปิด (Close) [ขวา]": f"ID: {c_id} (Unmatched, {c_qty} สัญญา, ปิดที่ {c_prem})", 
+            "P&L หักล้างสุทธิ (บาท)": round(standalone_pnl, 2)
+        })
 
     summary_df = pd.DataFrame(summary_list)
     if not summary_df.empty:
@@ -675,11 +711,13 @@ if not market_trades.empty:
         except:
             T = 30 / 365.0
             
-        matching_closes = close_trades_df[(close_trades_df["RefID"] == open_id) | 
-                                          ((close_trades_df["RefID"] == 0) & 
-                                           (close_trades_df["Series"] == open_row["Series"]) & 
-                                           (close_trades_df["Strike"] == stk) & 
-                                           (close_trades_df["Type"] == p_type))]
+        matching_closes = close_trades_df[
+            (close_trades_df["RefID"] == open_id) | 
+            ((close_trades_df["RefID"] == 0) & 
+             (close_trades_df["Series"] == open_row["Series"]) & 
+             (close_trades_df["Type"] == p_type) & 
+             (('Futures' in p_type) | (close_trades_df["Strike"] == stk)))
+        ]
         
         closed_qty = matching_closes["Contracts"].sum() if not matching_closes.empty else 0
         rem_qty = max(0, open_qty - closed_qty)

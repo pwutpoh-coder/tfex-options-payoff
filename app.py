@@ -347,6 +347,11 @@ contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
 trades_df = load_trades_from_file(active_portfolio)
 
+# แปลงประเภท ID และ RefID ให้เป็น Integer เพื่อป้องกันปัญหาการอ่านค่าจาก CSV
+if not trades_df.empty:
+    trades_df["ID"] = pd.to_numeric(trades_df["ID"], errors='coerce').fillna(0).astype(int)
+    trades_df["RefID"] = pd.to_numeric(trades_df["RefID"], errors='coerce').fillna(0).astype(int)
+
 current_year = date.today().year
 short_year = str(current_year)[-2:]
 next_short_year = str(current_year + 1)[-2:]
@@ -403,7 +408,7 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
             if strike_val is not None:
                 new_id = int(trades_df["ID"].max() + 1) if not trades_df.empty and "ID" in trades_df.columns and not pd.isna(trades_df["ID"].max()) else 1
                 new_row = pd.DataFrame([{
-                    "ID": new_id, "Market": selected_market, "Strategy": strategy_name if strategy_name else "Strategy #1", 
+                    "ID": int(new_id), "Market": selected_market, "Strategy": strategy_name if strategy_name else "Strategy #1", 
                     "Series": series_name, "Type": position_type, "Status": position_status, 
                     "Strike": float(strike_val), "Premium": premium, "Contracts": contracts, "Commission": commission, 
                     "TradeDate": str(trade_date), "ExpiryDate": str(expiry_date), "EntrySpot": spot_price, "RefID": int(ref_id_input) if position_status == "Close" else 0
@@ -478,6 +483,9 @@ with tab_m2:
 market_trades = pd.DataFrame()
 if not combined_trades_df.empty and "Market" in combined_trades_df.columns:
     market_trades = combined_trades_df[combined_trades_df["Market"] == selected_market]
+    if not market_trades.empty:
+        market_trades["ID"] = pd.to_numeric(market_trades["ID"], errors='coerce').fillna(0).astype(int)
+        market_trades["RefID"] = pd.to_numeric(market_trades["RefID"], errors='coerce').fillna(0).astype(int)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -521,8 +529,8 @@ else:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (แยกฝั่งซ้าย Open และฝั่งขวา Close พร้อมหักล้างกำไรขาดทุน) ---
-st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน (แยกฝั่งซ้าย Open และฝั่งขวา Close)")
+# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (ฝั่งซ้าย Open | ฝั่งขวา Close และแสดง P&L หักล้างสุทธิ) ---
+st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน (ฝั่งซ้าย Open และฝั่งขวา Close)")
 total_pnl_sum = 0.0
 if not market_trades.empty:
     summary_list = []
@@ -532,12 +540,12 @@ if not market_trades.empty:
     
     for _, open_row in open_trades_df.iterrows():
         p_src = open_row.get("Source_Portfolio", active_portfolio)
-        open_id = open_row["ID"]
+        open_id = int(open_row["ID"])
         ser, stk, p_type = open_row["Series"], float(open_row["Strike"]), open_row["Type"]
         open_qty, open_prem = int(open_row["Contracts"]), float(open_row["Premium"])
         comm_unit = float(open_row["Commission"])
         
-        # ค้นหาคำสั่ง Close ที่จับคู่กับ Open ID นี้
+        # ค้นหาคำสั่ง Close ที่จับคู่กับ Open ID นี้ (ตรวจสอบผ่าน RefID หรือสำรองจับคู่ตาม Series/Strike/Type)
         matching_closes = close_trades_df[(close_trades_df["RefID"] == open_id) | 
                                           ((close_trades_df["RefID"] == 0) & 
                                            (close_trades_df["Series"] == ser) & 
@@ -555,7 +563,7 @@ if not market_trades.empty:
         elif "Short Put" in p_type: badge_class = "badge-short-put"
         type_badge_html = f'<span class="{badge_class}">{p_type}</span>'
         
-        # คำนวณ P&L ของฝั่ง Open ที่เหลืออยู่ (Unrealized)
+        # คำนวณ P&L ของฝั่ง Open ที่เหลืออยู่ (Unrealized P&L)
         rem_pnl = 0.0
         if rem_qty > 0:
             mult_qty = rem_qty * contract_multiplier
@@ -573,17 +581,18 @@ if not market_trades.empty:
             elif p_type == "Short Put Option":
                 rem_pnl = (open_prem - np.maximum(0, stk - spot_price)) * mult_qty - comm_rem
         
-        # กรณีไม่มีการปิด (ไม่มีคู่ Close)
+        # กรณีไม่มีการปิดสถานะ (แสดงฝั่งขวาเป็นขีดเส้นใต้ หรือแสดง 0)
         if matching_closes.empty:
             summary_list.append({
                 "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
                 "สถานะเปิด (Open) [ซ้าย]": f"ID: {open_id} ({open_qty} สัญญา)", 
-                "สถานะปิด (Close) [ขวา]": "-", 
+                "สถานะปิด (Close) [ขวา]": "ยังไม่มีการปิด (0)", 
                 "P&L หักล้างสุทธิ (บาท)": round(rem_pnl, 2)
             })
         else:
-            # มีการปิด (อาจจะปิดบางส่วนหรือปิดทั้งหมด)
+            # มีการปิดสถานะ (แสดงรายการปิดฝั่งขวาและหักล้าง P&L)
             for _, c_row in matching_closes.iterrows():
+                c_id = int(c_row["ID"])
                 c_qty = int(c_row["Contracts"])
                 c_prem = float(c_row["Premium"])
                 c_comm = comm_unit * c_qty
@@ -594,12 +603,12 @@ if not market_trades.empty:
                 else:
                     c_pnl = ((open_prem - c_prem) * mult_c) - c_comm
                 
-                total_paired_pnl = rem_pnl + c_pnl if rem_qty >= 0 else c_pnl
+                total_paired_pnl = rem_pnl + c_pnl
                 
                 summary_list.append({
                     "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
-                    "สถานะเปิด (Open) [ซ้าย]": f"ID: {open_id} (เหลือ {rem_qty})", 
-                    "สถานะปิด (Close) [ขวา]": f"Close ID: {c_row['ID']} ({c_qty} สัญญา)", 
+                    "สถานะเปิด (Open) [ซ้าย]": f"ID: {open_id} (คงเหลือ {rem_qty})", 
+                    "สถานะปิด (Close) [ขวา]": f"ID: {c_id} ({c_qty} สัญญา, ปิดที่ {c_prem})", 
                     "P&L หักล้างสุทธิ (บาท)": round(total_paired_pnl, 2)
                 })
 
@@ -656,7 +665,7 @@ if not market_trades.empty:
     close_trades_df = market_trades[market_trades["Status"] == "Close"]
     
     for _, open_row in open_trades_df.iterrows():
-        open_id = open_row["ID"]
+        open_id = int(open_row["ID"])
         p_type, stk, prem = open_row["Type"], float(open_row["Strike"]), float(open_row["Premium"])
         open_qty = int(open_row["Contracts"])
         comm_unit = float(open_row["Commission"])

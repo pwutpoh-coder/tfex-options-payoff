@@ -521,8 +521,8 @@ else:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- ตารางสรุป P&L พร้อมหักลบกำไรขาดทุนสถานะเปิดและปิดที่จับคู่ผ่าน RefID อย่างถูกต้อง ---
-st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน")
+# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (แยกฝั่งซ้าย Open และฝั่งขวา Close พร้อมหักล้างกำไรขาดทุน) ---
+st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน (แยกฝั่งซ้าย Open และฝั่งขวา Close)")
 total_pnl_sum = 0.0
 if not market_trades.empty:
     summary_list = []
@@ -534,10 +534,10 @@ if not market_trades.empty:
         p_src = open_row.get("Source_Portfolio", active_portfolio)
         open_id = open_row["ID"]
         ser, stk, p_type = open_row["Series"], float(open_row["Strike"]), open_row["Type"]
-        open_qty, prem = int(open_row["Contracts"]), float(open_row["Premium"])
+        open_qty, open_prem = int(open_row["Contracts"]), float(open_row["Premium"])
         comm_unit = float(open_row["Commission"])
         
-        # ค้นหารายการ Close ที่จับคู่กับ Open ID นี้
+        # ค้นหาคำสั่ง Close ที่จับคู่กับ Open ID นี้
         matching_closes = close_trades_df[(close_trades_df["RefID"] == open_id) | 
                                           ((close_trades_df["RefID"] == 0) & 
                                            (close_trades_df["Series"] == ser) & 
@@ -555,7 +555,8 @@ if not market_trades.empty:
         elif "Short Put" in p_type: badge_class = "badge-short-put"
         type_badge_html = f'<span class="{badge_class}">{p_type}</span>'
         
-        # 1. ส่วนที่ยังเปิดอยู่ (Remaining Open)
+        # คำนวณ P&L ของฝั่ง Open ที่เหลืออยู่ (Unrealized)
+        rem_pnl = 0.0
         if rem_qty > 0:
             mult_qty = rem_qty * contract_multiplier
             comm_rem = comm_unit * rem_qty
@@ -564,23 +565,24 @@ if not market_trades.empty:
             elif p_type == "Short Futures":
                 rem_pnl = (stk - spot_price) * mult_qty - comm_rem
             elif p_type == "Long Call Option":
-                rem_pnl = (np.maximum(0, spot_price - stk) - prem) * mult_qty - comm_rem
+                rem_pnl = (np.maximum(0, spot_price - stk) - open_prem) * mult_qty - comm_rem
             elif p_type == "Short Call Option":
-                rem_pnl = (prem - np.maximum(0, spot_price - stk)) * mult_qty - comm_rem
+                rem_pnl = (open_prem - np.maximum(0, spot_price - stk)) * mult_qty - comm_rem
             elif p_type == "Long Put Option":
-                rem_pnl = (np.maximum(0, stk - spot_price) - prem) * mult_qty - comm_rem
+                rem_pnl = (np.maximum(0, stk - spot_price) - open_prem) * mult_qty - comm_rem
             elif p_type == "Short Put Option":
-                rem_pnl = (prem - np.maximum(0, stk - spot_price)) * mult_qty - comm_rem
-            else:
-                rem_pnl = 0
-                
+                rem_pnl = (open_prem - np.maximum(0, stk - spot_price)) * mult_qty - comm_rem
+        
+        # กรณีไม่มีการปิด (ไม่มีคู่ Close)
+        if matching_closes.empty:
             summary_list.append({
                 "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
-                "สถานะ": f"Open (ID: {open_id})", "สัญญา": rem_qty, "P&L (บาท)": round(rem_pnl, 2)
+                "สถานะเปิด (Open) [ซ้าย]": f"ID: {open_id} ({open_qty} สัญญา)", 
+                "สถานะปิด (Close) [ขวา]": "-", 
+                "P&L หักล้างสุทธิ (บาท)": round(rem_pnl, 2)
             })
-            
-        # 2. ส่วนที่ปิดไปแล้ว (Closed Parts) หักลบราคาพรีเมี่ยมต้นทุนเปิดกับราคาปิดอย่างถูกต้อง
-        if not matching_closes.empty:
+        else:
+            # มีการปิด (อาจจะปิดบางส่วนหรือปิดทั้งหมด)
             for _, c_row in matching_closes.iterrows():
                 c_qty = int(c_row["Contracts"])
                 c_prem = float(c_row["Premium"])
@@ -588,21 +590,26 @@ if not market_trades.empty:
                 mult_c = c_qty * contract_multiplier
                 
                 if "Long" in p_type:
-                    c_pnl = ((c_prem - prem) * mult_c) - c_comm
+                    c_pnl = ((c_prem - open_prem) * mult_c) - c_comm
                 else:
-                    c_pnl = ((prem - c_prem) * mult_c) - c_comm
-                    
+                    c_pnl = ((open_prem - c_prem) * mult_c) - c_comm
+                
+                total_paired_pnl = rem_pnl + c_pnl if rem_qty >= 0 else c_pnl
+                
                 summary_list.append({
                     "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
-                    "สถานะ": f"Close (Ref ID: {open_id})", "สัญญา": -c_qty, "P&L (บาท)": round(c_pnl, 2)
+                    "สถานะเปิด (Open) [ซ้าย]": f"ID: {open_id} (เหลือ {rem_qty})", 
+                    "สถานะปิด (Close) [ขวา]": f"Close ID: {c_row['ID']} ({c_qty} สัญญา)", 
+                    "P&L หักล้างสุทธิ (บาท)": round(total_paired_pnl, 2)
                 })
 
     summary_df = pd.DataFrame(summary_list)
     if not summary_df.empty:
-        total_pnl_sum = summary_df["P&L (บาท)"].sum()
+        total_pnl_sum = summary_df["P&L หักล้างสุทธิ (บาท)"].sum()
         total_sum_row = pd.DataFrame([{
             "พอร์ต": "รวมทั้งหมด", "ซีรีส์": "-", "Strike": "-", "ประเภท": "-",
-            "สถานะ": "-", "สัญญา": summary_df["สัญญา"].sum(), "P&L (บาท)": round(total_pnl_sum, 2)
+            "สถานะเปิด (Open) [ซ้าย]": "-", "สถานะปิด (Close) [ขวา]": "-", 
+            "P&L หักล้างสุทธิ (บาท)": round(total_pnl_sum, 2)
         }])
         summary_df = pd.concat([summary_df, total_sum_row], ignore_index=True)
     
@@ -632,7 +639,7 @@ if not journal_df.empty:
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 1: Net Expiry Payoff
+# กราฟที่ 1: Net Expiry Payoff (คำนวณแยก Open ที่เหลือ และ Closed ที่ล็อก P&L)
 # ==========================================
 st.subheader(f"📈 1. Payoff รวมวันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วยแสดงผล", ["บาทรวม (THB)", "จุด (Points)"])
@@ -668,7 +675,7 @@ if not market_trades.empty:
         closed_qty = matching_closes["Contracts"].sum() if not matching_closes.empty else 0
         rem_qty = max(0, open_qty - closed_qty)
         
-        # 1. ส่วนที่เหลือ Open อยู่
+        # 1. ส่วนที่เหลือ Open อยู่ (Payoff เคลื่อนไหวตามราคาอ้างอิง)
         if rem_qty > 0:
             mult_qty = (rem_qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else rem_qty)
             comm_rem = (comm_unit * rem_qty) if payoff_mode == "บาทรวม (THB)" else ((comm_unit * rem_qty) / contract_multiplier)
@@ -706,7 +713,7 @@ if not market_trades.empty:
                 hovertemplate=f"<b>{open_row['Strategy']} [Open]</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
             ))
             
-        # 2. ส่วนที่ปิดไปแล้ว (Locked Realized P&L)
+        # 2. ส่วนที่ปิดไปแล้ว (Payoff คงที่ ไม่เคลื่อนไหว)
         if not matching_closes.empty:
             for _, c_row in matching_closes.iterrows():
                 c_qty = int(c_row["Contracts"])

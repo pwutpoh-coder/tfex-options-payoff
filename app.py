@@ -371,7 +371,6 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
     position_status = st.selectbox("สถานะ", options=["Open", "Close"], index=0)
     position_type = st.selectbox("ประเภท", options=["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"], index=0)
     
-    # ช่องกรอก RefID หากเลือก Close เพื่อเลือกจับคู่กับรายการ Open
     ref_id_input = 0
     if position_status == "Close":
         open_list = trades_df[trades_df["Status"] == "Open"]
@@ -419,8 +418,8 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
                 st.session_state["form_key"] += 1
                 st.rerun()
 
-# --- ตารางแก้ไขข้อมูล ---
-st.subheader(f"📋 จัดการข้อมูลพอร์ต: `{active_portfolio}`")
+# --- ตารางแก้ไขข้อมูล (สามารถแก้ไขค่า RefID ได้โดยตรงในตาราง) ---
+st.subheader(f"📋 จัดการข้อมูลพอร์ต: `{active_portfolio}` (แก้ไข RefID เพื่อเปลี่ยนคู่จับคู่ได้ที่นี่)")
 active_df_to_use = trades_df.copy()
 
 if not trades_df.empty:
@@ -538,7 +537,6 @@ if not market_trades.empty:
     open_trades_df = market_trades[market_trades["Status"] == "Open"]
     close_trades_df = market_trades[market_trades["Status"] == "Close"]
     
-    # สร้างเซטיםเพื่อตรวจสอบ Close รายการใดที่ถูกจับคู่แล้ว
     matched_close_ids = set()
     
     for _, open_row in open_trades_df.iterrows():
@@ -548,7 +546,7 @@ if not market_trades.empty:
         open_qty, open_prem = int(open_row["Contracts"]), float(open_row["Premium"])
         comm_unit = float(open_row["Commission"])
         
-        # ค้นหาคำสั่ง Close ที่จับคู่กับ Open ID นี้ (ตรวจสอบผ่าน RefID หรือสำรองจับคู่ตาม Series/Type/Strike)
+        # ค้นหาคำสั่ง Close ที่จับคู่ผ่าน RefID หรือจับคู่อัตโนมัติกรณี RefID เป็น 0
         matching_closes = close_trades_df[
             (close_trades_df["RefID"] == open_id) | 
             ((close_trades_df["RefID"] == 0) & 
@@ -571,7 +569,6 @@ if not market_trades.empty:
         elif "Short Put" in p_type: badge_class = "badge-short-put"
         type_badge_html = f'<span class="{badge_class}">{p_type}</span>'
         
-        # คำนวณ P&L ของฝั่ง Open ที่เหลืออยู่ (Unrealized P&L)
         rem_pnl = 0.0
         if rem_qty > 0:
             mult_qty = rem_qty * contract_multiplier
@@ -589,7 +586,6 @@ if not market_trades.empty:
             elif p_type == "Short Put Option":
                 rem_pnl = (open_prem - np.maximum(0, stk - spot_price)) * mult_qty - comm_rem
         
-        # กรณีไม่มีการปิดสถานะ (แสดงฝั่งขวาเป็น 0 / ยังไม่มีการปิด)
         if matching_closes.empty:
             summary_list.append({
                 "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
@@ -598,7 +594,6 @@ if not market_trades.empty:
                 "P&L หักล้างสุทธิ (บาท)": round(rem_pnl, 2)
             })
         else:
-            # มีการปิดสถานะ (แสดงรายการปิดฝั่งขวาและหักล้าง P&L)
             for _, c_row in matching_closes.iterrows():
                 c_id = int(c_row["ID"])
                 c_qty = int(c_row["Contracts"])
@@ -620,7 +615,6 @@ if not market_trades.empty:
                     "P&L หักล้างสุทธิ (บาท)": round(total_paired_pnl, 2)
                 })
 
-    # จัดการรายการ Close ที่หลงเหลือ (Unmatched Close ที่ไม่มี Open ตรงกัน)
     unmatched_closes = close_trades_df[~close_trades_df["ID"].isin(matched_close_ids)]
     for _, c_row in unmatched_closes.iterrows():
         p_src = c_row.get("Source_Portfolio", active_portfolio)

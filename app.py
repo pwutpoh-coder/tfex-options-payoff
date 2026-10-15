@@ -521,7 +521,7 @@ else:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- ตารางสรุป P&L พร้อมแยกส่วนที่เปิดอยู่และส่วนที่ปิดไปแล้ว (Partial Close & Remaining Open) ---
+# --- ตารางสรุป P&L พร้อมหักลบกำไรขาดทุนสถานะเปิดและปิดที่จับคู่ผ่าน RefID อย่างถูกต้อง ---
 st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน")
 total_pnl_sum = 0.0
 if not market_trades.empty:
@@ -530,7 +530,6 @@ if not market_trades.empty:
     open_trades_df = market_trades[market_trades["Status"] == "Open"]
     close_trades_df = market_trades[market_trades["Status"] == "Close"]
     
-    # วนลูปประมวลผลแต่ละรายการ Open และแยกการปิดบางส่วน (Partial Close)
     for _, open_row in open_trades_df.iterrows():
         p_src = open_row.get("Source_Portfolio", active_portfolio)
         open_id = open_row["ID"]
@@ -538,7 +537,7 @@ if not market_trades.empty:
         open_qty, prem = int(open_row["Contracts"]), float(open_row["Premium"])
         comm_unit = float(open_row["Commission"])
         
-        # ค้นหาว่ามีรายการ Close ไหนที่จับคู่กับ Open ID นี้บ้าง (ผ่าน RefID หรือ Fallback จับคู่ตาม Series/Strike/Type)
+        # ค้นหารายการ Close ที่จับคู่กับ Open ID นี้
         matching_closes = close_trades_df[(close_trades_df["RefID"] == open_id) | 
                                           ((close_trades_df["RefID"] == 0) & 
                                            (close_trades_df["Series"] == ser) & 
@@ -556,7 +555,7 @@ if not market_trades.empty:
         elif "Short Put" in p_type: badge_class = "badge-short-put"
         type_badge_html = f'<span class="{badge_class}">{p_type}</span>'
         
-        # 1. ส่วนที่ยังเปิดอยู่ (Remaining Open) - วิ่งตามราคา Spot
+        # 1. ส่วนที่ยังเปิดอยู่ (Remaining Open)
         if rem_qty > 0:
             mult_qty = rem_qty * contract_multiplier
             comm_rem = comm_unit * rem_qty
@@ -580,7 +579,7 @@ if not market_trades.empty:
                 "สถานะ": f"Open (ID: {open_id})", "สัญญา": rem_qty, "P&L (บาท)": round(rem_pnl, 2)
             })
             
-        # 2. ส่วนที่ปิดไปแล้ว (Closed Parts) - กำไร/ขาดทุนคงที่
+        # 2. ส่วนที่ปิดไปแล้ว (Closed Parts) หักลบราคาพรีเมี่ยมต้นทุนเปิดกับราคาปิดอย่างถูกต้อง
         if not matching_closes.empty:
             for _, c_row in matching_closes.iterrows():
                 c_qty = int(c_row["Contracts"])
@@ -633,7 +632,7 @@ if not journal_df.empty:
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 1: Net Expiry Payoff (คำนวณแยก Open ที่เหลือ และ Closed ที่ล็อก P&L)
+# กราฟที่ 1: Net Expiry Payoff
 # ==========================================
 st.subheader(f"📈 1. Payoff รวมวันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วยแสดงผล", ["บาทรวม (THB)", "จุด (Points)"])
@@ -669,7 +668,7 @@ if not market_trades.empty:
         closed_qty = matching_closes["Contracts"].sum() if not matching_closes.empty else 0
         rem_qty = max(0, open_qty - closed_qty)
         
-        # 1. ส่วนที่เหลือ Open อยู่ (Payoff เคลื่อนไหวตามราคาอ้างอิง)
+        # 1. ส่วนที่เหลือ Open อยู่
         if rem_qty > 0:
             mult_qty = (rem_qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else rem_qty)
             comm_rem = (comm_unit * rem_qty) if payoff_mode == "บาทรวม (THB)" else ((comm_unit * rem_qty) / contract_multiplier)
@@ -707,7 +706,7 @@ if not market_trades.empty:
                 hovertemplate=f"<b>{open_row['Strategy']} [Open]</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
             ))
             
-        # 2. ส่วนที่ปิดไปแล้ว (Payoff คงที่ ไม่เคลื่อนไหว)
+        # 2. ส่วนที่ปิดไปแล้ว (Locked Realized P&L)
         if not matching_closes.empty:
             for _, c_row in matching_closes.iterrows():
                 c_qty = int(c_row["Contracts"])

@@ -481,7 +481,6 @@ if not market_trades.empty:
         sub_df = market_trades[market_trades["Type"] == t_item]
         total_cnt = sub_df["Contracts"].sum() if not sub_df.empty else 0
         
-        # คำนวณ Net Open Contracts โดยนำ Open เป็นบวก และ Close เป็นลบหักลบกัน
         open_rows = sub_df[sub_df["Status"] == "Open"]
         close_rows = sub_df[sub_df["Status"] == "Close"]
         open_cnt = open_rows["Contracts"].sum() if not open_rows.empty else 0
@@ -512,19 +511,21 @@ else:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- ตารางสรุป P&L พร้อมป้ายสัญลักษณ์สี (แยกการคิดกำไรระหว่าง Open และ Close ที่ล็อกผลกำไรแล้ว) ---
+# --- ตารางสรุป P&L พร้อมจับคู่ Open / Close ให้ตรงกับ Payoff ---
 st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน")
 total_pnl_sum = 0.0
 if not market_trades.empty:
     summary_list = []
+    
+    # ทำระบบจับคู่สัญญา Open และ Close ตาม Series, Strike, Type เพื่อคำนวณกำไรที่แท้จริง
     for idx, row in market_trades.iterrows():
         p_src = row.get("Source_Portfolio", active_portfolio)
         ser, stk, p_type, status = row["Series"], float(row["Strike"]), row["Type"], row["Status"]
         qty, prem, comm = int(row["Contracts"]), float(row["Premium"]), float(row["Commission"]) * int(row["Contracts"])
         
         if status == "Open":
-            sign_m = 1
-            mult_qty = qty * contract_multiplier * sign_m
+            # คำนวณ Unrealized P&L ตามราคา Spot ปัจจุบัน
+            mult_qty = qty * contract_multiplier
             if p_type == "Long Futures":
                 item_pnl = (spot_price - stk) * mult_qty - comm
             elif p_type == "Short Futures":
@@ -541,15 +542,20 @@ if not market_trades.empty:
                 item_pnl = 0
             display_qty = qty
         else:
-            # สถานะ Close: ใช้ราคาพรีเมี่ยม/ราคาปิดที่บันทึกไว้ในการคำนวณกำไรขาดทุนคงที่ (Realized P&L)
-            sign_m = -1
+            # สถานะ Close: ค้นหาต้นทุนจากรายการ Open ที่ตรงกันเพื่อคำนวณ Realized P&L ที่ถูกต้อง
+            matching_opens = market_trades[(market_trades["Series"] == ser) & 
+                                           (market_trades["Strike"] == stk) & 
+                                           (market_trades["Type"] == p_type) & 
+                                           (market_trades["Status"] == "Open")]
+            
+            avg_entry_prem = matching_opens["Premium"].mean() if not matching_opens.empty else prem
             mult_qty = qty * contract_multiplier
-            # สมมติว่า Premium ที่กรอกตอน Close คือราคาที่ใช้ปิดสัญญา เทียบกับ Entry Spot หรือต้นทุน
-            # ในที่นี้ให้คิดเทียบกับ Premium ตอนเปิดหรือคำนวณจากราคาปิดจริงตามประเภท
+            
+            # คำนวณกำไร/ขาดทุนจากการปิดสัญญาเทียบกับต้นทุน (Long ซื้อถูกขายแพง / Short ขายแพงซื้อถูก)
             if "Long" in p_type:
-                item_pnl = (prem - comm) * mult_qty # กำไร/ขาดทุนสุทธิที่ล็อกไว้จากการขายปิด
+                item_pnl = ((prem - avg_entry_prem) * mult_qty) - comm
             else:
-                item_pnl = (prem - comm) * mult_qty
+                item_pnl = ((avg_entry_prem - prem) * mult_qty) - comm
             display_qty = -qty
 
         badge_class = "badge-long-fu"
@@ -651,9 +657,19 @@ if not market_trades.empty:
             else:
                 total_greeks["Delta"] += 1.0 * qty * contract_multiplier * (1 if "Long" in p_type else -1)
         else:
-            # สถานะ Close: ล็อกกำไร/ขาดทุนเป็นเส้นตรงคงที่ใน Payoff ไม่ขึ้นกับราคา Spot
+            # สถานะ Close: ใช้คำนวณกำไรล็อคตายตัวเทียบกับราคาเปิด (Matching Entry Premium)
+            matching_opens = market_trades[(market_trades["Series"] == row["Series"]) & 
+                                           (market_trades["Strike"] == stk) & 
+                                           (market_trades["Type"] == p_type) & 
+                                           (market_trades["Status"] == "Open")]
+            avg_entry_prem = matching_opens["Premium"].mean() if not matching_opens.empty else prem
+            
             mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
-            locked_pnl_val = (prem * mult_qty) - comm_val
+            if "Long" in p_type:
+                locked_pnl_val = ((prem - avg_entry_prem) * mult_qty) - comm_val
+            else:
+                locked_pnl_val = ((avg_entry_prem - prem) * mult_qty) - comm_val
+            
             payoff = np.full_like(price_range, locked_pnl_val)
 
         total_payoff += payoff
@@ -811,8 +827,17 @@ if not market_trades.empty:
                     else:
                         val = -comm_val
                 else:
+                    matching_opens = market_trades[(market_trades["Series"] == row["Series"]) & 
+                                                   (market_trades["Strike"] == stk) & 
+                                                   (market_trades["Type"] == p_type) & 
+                                                   (market_trades["Status"] == "Open")]
+                    avg_entry_prem = matching_opens["Premium"].mean() if not matching_opens.empty else prem
+                    
                     mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
-                    locked_val = (prem * mult_qty) - comm_val
+                    if "Long" in p_type:
+                        locked_val = ((prem - avg_entry_prem) * mult_qty) - comm_val
+                    else:
+                        locked_val = ((avg_entry_prem - prem) * mult_qty) - comm_val
                     val = np.full_like(price_range, locked_val)
 
                 day_val += val
@@ -856,8 +881,17 @@ if not market_trades.empty:
                     else:
                         val = -comm_val
                 else:
+                    matching_opens = market_trades[(market_trades["Series"] == row["Series"]) & 
+                                                   (market_trades["Strike"] == stk) & 
+                                                   (market_trades["Type"] == p_type) & 
+                                                   (market_trades["Status"] == "Open")]
+                    avg_entry_prem = matching_opens["Premium"].mean() if not matching_opens.empty else prem
+                    
                     mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
-                    locked_val = (prem * mult_qty) - comm_val
+                    if "Long" in p_type:
+                        locked_val = ((prem - avg_entry_prem) * mult_qty) - comm_val
+                    else:
+                        locked_val = ((avg_entry_prem - prem) * mult_qty) - comm_val
                     val = np.full_like(price_range, locked_val)
 
                 cum_val += val

@@ -528,8 +528,8 @@ else:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (ฝั่งซ้าย Open | ฝั่งขวา Close และแสดง P&L หักล้างสุทธิ) ---
-st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน (ฝั่งซ้าย Open และฝั่งขวา Close)")
+# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (ตามลำดับการจัดการพอร์ต) ---
+st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน")
 total_pnl_sum = 0.0
 if not market_trades.empty:
     summary_list = []
@@ -538,6 +538,7 @@ if not market_trades.empty:
     close_trades_df = market_trades[market_trades["Status"] == "Close"]
     
     matched_close_ids = set()
+    row_seq = 1  # สำหรับนับลำดับการจัดการพอร์ต
     
     for _, open_row in open_trades_df.iterrows():
         p_src = open_row.get("Source_Portfolio", active_portfolio)
@@ -588,11 +589,13 @@ if not market_trades.empty:
         
         if matching_closes.empty:
             summary_list.append({
+                "ลำดับ": row_seq,
                 "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
-                "สถานะเปิด (Open) [ซ้าย]": f"ID: {open_id} ({open_qty} สัญญา)", 
-                "สถานะปิด (Close) [ขวา]": "ยังไม่มีการปิด (0)", 
+                "Open": f"ID: {open_id} ({open_qty} สัญญา)", 
+                "Close": "ยังไม่มีการปิด (0)", 
                 "P&L หักล้างสุทธิ (บาท)": round(rem_pnl, 2)
             })
+            row_seq += 1
         else:
             for _, c_row in matching_closes.iterrows():
                 c_id = int(c_row["ID"])
@@ -609,11 +612,13 @@ if not market_trades.empty:
                 total_paired_pnl = rem_pnl + c_pnl
                 
                 summary_list.append({
+                    "ลำดับ": row_seq,
                     "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
-                    "สถานะเปิด (Open) [ซ้าย]": f"ID: {open_id} (คงเหลือ {rem_qty})", 
-                    "สถานะปิด (Close) [ขวา]": f"ID: {c_id} ({c_qty} สัญญา, ปิดที่ {c_prem})", 
+                    "Open": f"ID: {open_id} (คงเหลือ {rem_qty})", 
+                    "Close": f"ID: {c_id} ({c_qty} สัญญา, ปิดที่ {c_prem})", 
                     "P&L หักล้างสุทธิ (บาท)": round(total_paired_pnl, 2)
                 })
+                row_seq += 1
 
     unmatched_closes = close_trades_df[~close_trades_df["ID"].isin(matched_close_ids)]
     for _, c_row in unmatched_closes.iterrows():
@@ -636,18 +641,21 @@ if not market_trades.empty:
         standalone_pnl = (c_prem * mult_c) - c_comm
         
         summary_list.append({
+            "ลำดับ": row_seq,
             "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
-            "สถานะเปิด (Open) [ซ้าย]": "-", 
-            "สถานะปิด (Close) [ขวา]": f"ID: {c_id} (Unmatched, {c_qty} สัญญา, ปิดที่ {c_prem})", 
+            "Open": "-", 
+            "Close": f"ID: {c_id} (Unmatched, {c_qty} สัญญา, ปิดที่ {c_prem})", 
             "P&L หักล้างสุทธิ (บาท)": round(standalone_pnl, 2)
         })
+        row_seq += 1
 
     summary_df = pd.DataFrame(summary_list)
     if not summary_df.empty:
         total_pnl_sum = summary_df["P&L หักล้างสุทธิ (บาท)"].sum()
         total_sum_row = pd.DataFrame([{
+            "ลำดับ": "",
             "พอร์ต": "รวมทั้งหมด", "ซีรีส์": "-", "Strike": "-", "ประเภท": "-",
-            "สถานะเปิด (Open) [ซ้าย]": "-", "สถานะปิด (Close) [ขวา]": "-", 
+            "Open": "-", "Close": "-", 
             "P&L หักล้างสุทธิ (บาท)": round(total_pnl_sum, 2)
         }])
         summary_df = pd.concat([summary_df, total_sum_row], ignore_index=True)
@@ -678,7 +686,7 @@ if not journal_df.empty:
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 1: Net Expiry Payoff (คำนวณแยก Open ที่เหลือ และ Closed ที่ล็อก P&L)
+# กราฟที่ 1: Net Expiry Payoff (ตัดเส้นย่อยออก เหลือเฉพาะ Net Pay)
 # ==========================================
 st.subheader(f"📈 1. Payoff รวมวันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วยแสดงผล", ["บาทรวม (THB)", "จุด (Points)"])
@@ -716,7 +724,7 @@ if not market_trades.empty:
         closed_qty = matching_closes["Contracts"].sum() if not matching_closes.empty else 0
         rem_qty = max(0, open_qty - closed_qty)
         
-        # 1. ส่วนที่เหลือ Open อยู่ (Payoff เคลื่อนไหวตามราคาอ้างอิง)
+        # 1. ส่วนที่เหลือ Open อยู่
         if rem_qty > 0:
             mult_qty = (rem_qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else rem_qty)
             comm_rem = (comm_unit * rem_qty) if payoff_mode == "บาทรวม (THB)" else ((comm_unit * rem_qty) / contract_multiplier)
@@ -747,14 +755,8 @@ if not market_trades.empty:
                 total_greeks["Vega"] += g["Vega"] * rem_qty * contract_multiplier * dir_s
             else:
                 total_greeks["Delta"] += 1.0 * rem_qty * contract_multiplier * (1 if "Long" in p_type else -1)
-
-            fig.add_trace(go.Scatter(
-                x=price_range, y=payoff_rem, mode='lines', name=f"{open_row['Strategy']} ({p_type} - Open ID {open_id})",
-                line=dict(dash='dash', width=1), opacity=0.4,
-                hovertemplate=f"<b>{open_row['Strategy']} [Open]</b><br>Price: %{{x:.2f}}<br>P&L: %{{y:,.2f}}<extra></extra>"
-            ))
             
-        # 2. ส่วนที่ปิดไปแล้ว (Payoff คงที่ ไม่เคลื่อนไหว)
+        # 2. ส่วนที่ปิดไปแล้ว
         if not matching_closes.empty:
             for _, c_row in matching_closes.iterrows():
                 c_qty = int(c_row["Contracts"])
@@ -769,12 +771,6 @@ if not market_trades.empty:
                     
                 payoff_closed = np.full_like(price_range, locked_val)
                 total_payoff += payoff_closed
-
-                fig.add_trace(go.Scatter(
-                    x=price_range, y=payoff_closed, mode='lines', name=f"{open_row['Strategy']} ({p_type} - Closed)",
-                    line=dict(dash='dot', width=1), opacity=0.3,
-                    hovertemplate=f"<b>{open_row['Strategy']} [Closed]</b><br>Locked P&L: %{{y:,.2f}}<extra></extra>"
-                ))
 
 # Break-even
 be_points = []

@@ -7,9 +7,10 @@ import os
 from datetime import datetime, date, timezone, timedelta
 from scipy.stats import norm
 
-# ตั้งค่าหน้าเว็บให้รองรับการใช้งานบนมือถือ (Mobile Responsive)
+# ตั้งค่าหน้าเว็บ: เพิ่มไอคอนอิโมจิ 📈 และปรับแต่ง Title ให้สังเกตง่าย
 st.set_page_config(
     page_title="TFEX Payoff & Greeks Pro", 
+    page_icon="📈",
     layout="wide",
     initial_sidebar_state="auto"
 )
@@ -260,7 +261,7 @@ def bs_greeks(S, K, T, r, sigma, option_type):
     vega = S * norm.pdf(d1) * np.sqrt(T) / 100.0
     return {"Delta": delta, "Gamma": gamma, "Theta": theta, "Vega": vega}
 
-# --- UI หลัก ---
+# --- UI หลัก (ใส่ไอคอนหัวข้อให้สังเกตง่าย) ---
 st.title("📈 TFEX Payoff & Greeks Pro")
 
 # --- Sidebar ---
@@ -402,7 +403,7 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
                 st.rerun()
 
 # --- ตารางจัดการข้อมูล ---
-st.subheader(f"📋 จัดการพอร์ต: `{active_portfolio}`")
+st.subheader("📋 จัดการพอร์ตข้อมูลการเทรด")
 active_df_to_use = trades_df.copy()
 
 if not trades_df.empty:

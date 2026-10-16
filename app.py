@@ -528,7 +528,7 @@ else:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (ตัดคอลัมน์ OpenClose ออก เหลือแยกช่อง Open และ Close ชัดเจน) ---
+# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (ตัดคอลัมน์ซ้ำซ้อนออก เหลือเฉพาะลำดับ, พอร์ต, ซีรีส์, Strike, ประเภท, Open, Close, P&L) ---
 st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน")
 total_pnl_sum = 0.0
 if not market_trades.empty:

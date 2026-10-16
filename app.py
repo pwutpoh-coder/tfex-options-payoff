@@ -7,9 +7,9 @@ import os
 from datetime import datetime, date, timezone, timedelta
 from scipy.stats import norm
 
-# ตั้งค่าหน้าเว็บ: เพิ่มไอคอนอิโมจิ 📈 และปรับแต่ง Title ให้สังเกตง่าย
+# ตั้งค่าหน้าเว็บ: ใช้ชื่อ Futures & Options Payoff และไอคอน 📈
 st.set_page_config(
-    page_title="TFEX Payoff & Greeks Pro", 
+    page_title="Futures & Options Payoff", 
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="auto"
@@ -261,8 +261,8 @@ def bs_greeks(S, K, T, r, sigma, option_type):
     vega = S * norm.pdf(d1) * np.sqrt(T) / 100.0
     return {"Delta": delta, "Gamma": gamma, "Theta": theta, "Vega": vega}
 
-# --- UI หลัก (ใส่ไอคอนหัวข้อให้สังเกตง่าย) ---
-st.title("📈 TFEX Payoff & Greeks Pro")
+# --- UI หลัก: เปลี่ยนชื่อหัวข้อเป็น Futures & Options Payoff ---
+st.title("📈 Futures & Options Payoff")
 
 # --- Sidebar ---
 st.sidebar.header("📁 จัดการพอร์ต")

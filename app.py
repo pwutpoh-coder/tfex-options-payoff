@@ -528,7 +528,7 @@ else:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (ตัดคอลัมน์ซ้ำซ้อนออก เหลือเฉพาะลำดับ, พอร์ต, ซีรีส์, Strike, ประเภท, Open, Close, P&L) ---
+# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (แก้ไขการคำนวณ P&L ของ Futures และปล่อยช่อง Close ว่างหากไม่มีการปิด) ---
 st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน")
 total_pnl_sum = 0.0
 if not market_trades.empty:
@@ -592,7 +592,7 @@ if not market_trades.empty:
                 "ลำดับ": row_seq,
                 "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
                 "Open": f"ID: {open_id} ({open_qty} สัญญา)", 
-                "Close": "ยังไม่มีการปิด (0)", 
+                "Close": "", 
                 "P&L หักล้างสุทธิ (บาท)": round(rem_pnl, 2)
             })
             row_seq += 1
@@ -604,17 +604,23 @@ if not market_trades.empty:
                 c_comm = comm_unit * c_qty
                 mult_c = c_qty * contract_multiplier
                 
-                if "Long" in p_type:
-                    c_pnl = ((c_prem - open_prem) * mult_c) - c_comm
-                else:
-                    c_pnl = ((open_prem - c_prem) * mult_c) - c_comm
+                if "Futures" in p_type:
+                    if "Long" in p_type:
+                        c_pnl = ((c_prem - open_prem) * mult_c) - c_comm
+                    else:  # Short Futures
+                        c_pnl = ((open_prem - c_prem) * mult_c) - c_comm
+                else:  # Options
+                    if "Long" in p_type:
+                        c_pnl = ((c_prem - open_prem) * mult_c) - c_comm
+                    else:
+                        c_pnl = ((open_prem - c_prem) * mult_c) - c_comm
                 
                 total_paired_pnl = rem_pnl + c_pnl
                 
                 summary_list.append({
                     "ลำดับ": row_seq,
                     "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
-                    "Open": f"ID: {open_id} (คงเหลือ {rem_qty})", 
+                    "Open": f"ID: {open_id} (คงเหลือ {rem_qty})" if rem_qty > 0 else f"ID: {open_id} (ปิดหมดแล้ว)", 
                     "Close": f"ID: {c_id} ({c_qty} สัญญา, ปิดที่ {c_prem})", 
                     "P&L หักล้างสุทธิ (บาท)": round(total_paired_pnl, 2)
                 })
@@ -655,7 +661,7 @@ if not market_trades.empty:
         total_sum_row = pd.DataFrame([{
             "ลำดับ": "",
             "พอร์ต": "รวมทั้งหมด", "ซีรีส์": "-", "Strike": "-", "ประเภท": "-",
-            "Open": "-", "Close": "-", 
+            "Open": "", "Close": "", 
             "P&L หักล้างสุทธิ (บาท)": round(total_pnl_sum, 2)
         }])
         summary_df = pd.concat([summary_df, total_sum_row], ignore_index=True)
@@ -764,10 +770,16 @@ if not market_trades.empty:
                 c_comm = (comm_unit * c_qty) if payoff_mode == "บาทรวม (THB)" else ((comm_unit * c_qty) / contract_multiplier)
                 mult_c = (c_qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else c_qty)
                 
-                if "Long" in p_type:
-                    locked_val = ((c_prem - prem) * mult_c) - c_comm
-                else:
-                    locked_val = ((prem - c_prem) * mult_c) - c_comm
+                if "Futures" in p_type:
+                    if "Long" in p_type:
+                        locked_val = ((c_prem - prem) * mult_c) - c_comm
+                    else:  # Short Futures
+                        locked_val = ((prem - c_prem) * mult_c) - c_comm
+                else:  # Options
+                    if "Long" in p_type:
+                        locked_val = ((c_prem - prem) * mult_c) - c_comm
+                    else:
+                        locked_val = ((prem - c_prem) * mult_c) - c_comm
                     
                 payoff_closed = np.full_like(price_range, locked_val)
                 total_payoff += payoff_closed
@@ -924,10 +936,16 @@ if not market_trades.empty:
                     entry_prem = float(matching_open["Premium"].values[0]) if not matching_open.empty else prem
                     
                     mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
-                    if "Long" in p_type:
-                        val = np.full_like(price_range, ((prem - entry_prem) * mult_qty) - comm_val)
+                    if "Futures" in p_type:
+                        if "Long" in p_type:
+                            val = np.full_like(price_range, ((prem - entry_prem) * mult_qty) - comm_val)
+                        else:
+                            val = np.full_like(price_range, ((entry_prem - prem) * mult_qty) - comm_val)
                     else:
-                        val = np.full_like(price_range, ((entry_prem - prem) * mult_qty) - comm_val)
+                        if "Long" in p_type:
+                            val = np.full_like(price_range, ((prem - entry_prem) * mult_qty) - comm_val)
+                        else:
+                            val = np.full_like(price_range, ((entry_prem - prem) * mult_qty) - comm_val)
 
                 day_val += val
                 
@@ -975,10 +993,16 @@ if not market_trades.empty:
                     entry_prem = float(matching_open["Premium"].values[0]) if not matching_open.empty else prem
                     
                     mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
-                    if "Long" in p_type:
-                        val = np.full_like(price_range, ((prem - entry_prem) * mult_qty) - comm_val)
+                    if "Futures" in p_type:
+                        if "Long" in p_type:
+                            val = np.full_like(price_range, ((prem - entry_prem) * mult_qty) - comm_val)
+                        else:
+                            val = np.full_like(price_range, ((entry_prem - prem) * mult_qty) - comm_val)
                     else:
-                        val = np.full_like(price_range, ((entry_prem - prem) * mult_qty) - comm_val)
+                        if "Long" in p_type:
+                            val = np.full_like(price_range, ((prem - entry_prem) * mult_qty) - comm_val)
+                        else:
+                            val = np.full_like(price_range, ((entry_prem - prem) * mult_qty) - comm_val)
 
                 cum_val += val
                 

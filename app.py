@@ -17,7 +17,7 @@ st.set_page_config(
 # กำหนดโซนเวลา Bangkok (UTC+7)
 BANGKOK_TZ = timezone(timedelta(hours=7))
 
-# --- CSS พิเศษช่วยปรับแต่งการแสดงผลบนมือถือและสัญลักษณ์สี (Soft Color Badges) ---
+# --- CSS พิเศษช่วยปรับแต่งการแสดงผลบนมือถือ, สัญลักษณ์สี, และตารางแบบเลื่อนบาร์แนวนอนบรรทัดเดียว ---
 st.markdown("""
     <style>
     .stMetric {
@@ -26,12 +26,38 @@ st.markdown("""
         border-radius: 8px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
-    .badge-long-fu { background-color: #e2f0d9; color: #385723; padding: 3px 8px; border-radius: 4px; font-weight: 500; font-size: 12px; }
-    .badge-short-fu { background-color: #fce4d6; color: #c65911; padding: 3px 8px; border-radius: 4px; font-weight: 500; font-size: 12px; }
-    .badge-long-call { background-color: #d9e1f2; color: #1f3864; padding: 3px 8px; border-radius: 4px; font-weight: 500; font-size: 12px; }
-    .badge-short-call { background-color: #f2d9d9; color: #c00000; padding: 3px 8px; border-radius: 4px; font-weight: 500; font-size: 12px; }
-    .badge-long-put { background-color: #fff2cc; color: #7f6000; padding: 3px 8px; border-radius: 4px; font-weight: 500; font-size: 12px; }
-    .badge-short-put { background-color: #e1d5e7; color: #351c75; padding: 3px 8px; border-radius: 4px; font-weight: 500; font-size: 12px; }
+    .badge-long-fu { background-color: #e2f0d9; color: #385723; padding: 2px 6px; border-radius: 4px; font-weight: 500; font-size: 11px; }
+    .badge-short-fu { background-color: #fce4d6; color: #c65911; padding: 2px 6px; border-radius: 4px; font-weight: 500; font-size: 11px; }
+    .badge-long-call { background-color: #d9e1f2; color: #1f3864; padding: 2px 6px; border-radius: 4px; font-weight: 500; font-size: 11px; }
+    .badge-short-call { background-color: #f2d9d9; color: #c00000; padding: 2px 6px; border-radius: 4px; font-weight: 500; font-size: 11px; }
+    .badge-long-put { background-color: #fff2cc; color: #7f6000; padding: 2px 6px; border-radius: 4px; font-weight: 500; font-size: 11px; }
+    .badge-short-put { background-color: #e1d5e7; color: #351c75; padding: 2px 6px; border-radius: 4px; font-weight: 500; font-size: 11px; }
+    
+    /* สไตล์สำหรับตารางสรุปให้เลื่อนบาร์แนวนอนได้และแสดงเป็นบรรทัดเดียว */
+    .scrollable-table-container {
+        width: 100%;
+        overflow-x: auto;
+        white-space: nowrap;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 4px;
+        background-color: #ffffff;
+    }
+    .scrollable-table-container table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+    .scrollable-table-container th, .scrollable-table-container td {
+        padding: 8px 12px;
+        text-align: left;
+        border-bottom: 1px solid #dee2e6;
+    }
+    .scrollable-table-container th {
+        background-color: #f8f9fa;
+        font-weight: bold;
+    }
+
     @media (max-width: 768px) {
         .main .block-container {
             padding-left: 1rem;
@@ -528,7 +554,7 @@ else:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (หักค่าคอมมิชชันทั้งขาเปิดและขาปิดอย่างถูกต้อง) ---
+# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (แบบกระชับ บรรทัดเดียว เลื่อนบาร์แนวนอนได้) ---
 st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน")
 total_pnl_sum = 0.0
 if not market_trades.empty:
@@ -591,9 +617,9 @@ if not market_trades.empty:
             summary_list.append({
                 "ลำดับ": row_seq,
                 "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
-                "Open": f"ID: {open_id} ({open_qty} สัญญา)", 
+                "Open": f"ID {open_id} ({open_qty} สัญญา)", 
                 "Close": "", 
-                "P&L หักล้างสุทธิ (บาท)": round(rem_pnl, 2)
+                "P&L หักล้างสุทธิ (บาท)": f"{round(rem_pnl, 2):,}"
             })
             row_seq += 1
         else:
@@ -604,17 +630,15 @@ if not market_trades.empty:
                 c_strike_close = float(c_row["Strike"])
                 comm_unit_close = float(c_row["Commission"])
                 
-                # หักค่าคอมฯ ทั้งขาเปิด (เฉพาะส่วนที่ปิด) และขาปิด
                 c_comm = (comm_unit_open * c_qty) + (comm_unit_close * c_qty)
                 mult_c = c_qty * contract_multiplier
                 
                 if "Futures" in p_type:
-                    # สำหรับ Futures ใช้ราคาจาก Strike
                     if "Long" in p_type:
                         c_pnl = ((c_strike_close - stk) * mult_c) - c_comm
-                    else:  # Short Futures
+                    else:
                         c_pnl = ((stk - c_strike_close) * mult_c) - c_comm
-                else:  # Options ใช้ราคาจาก Premium
+                else:
                     if "Long" in p_type:
                         c_pnl = ((c_prem - open_prem) * mult_c) - c_comm
                     else:
@@ -625,9 +649,9 @@ if not market_trades.empty:
                 summary_list.append({
                     "ลำดับ": row_seq,
                     "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
-                    "Open": f"ID: {open_id} (คงเหลือ {rem_qty})" if rem_qty > 0 else f"ID: {open_id} (ปิดหมดแล้ว)", 
-                    "Close": f"ID: {c_id} ({c_qty} สัญญา, ปิดที่ {c_strike_close if 'Futures' in p_type else c_prem})", 
-                    "P&L หักล้างสุทธิ (บาท)": round(total_paired_pnl, 2)
+                    "Open": f"ID {open_id} (คงเหลือ {rem_qty})" if rem_qty > 0 else f"ID {open_id} (ปิดหมด)", 
+                    "Close": f"ID {c_id} ({c_qty} @ {c_strike_close if 'Futures' in p_type else c_prem})", 
+                    "P&L หักล้างสุทธิ (บาท)": f"{round(total_paired_pnl, 2):,}"
                 })
                 row_seq += 1
 
@@ -655,23 +679,34 @@ if not market_trades.empty:
             "ลำดับ": row_seq,
             "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
             "Open": "-", 
-            "Close": f"ID: {c_id} (Unmatched, {c_qty} สัญญา, ปิดที่ {c_prem})", 
-            "P&L หักล้างสุทธิ (บาท)": round(standalone_pnl, 2)
+            "Close": f"ID {c_id} (Unmatched, {c_qty} สัญญา)", 
+            "P&L หักล้างสุทธิ (บาท)": f"{round(standalone_pnl, 2):,}"
         })
         row_seq += 1
 
     summary_df = pd.DataFrame(summary_list)
     if not summary_df.empty:
-        total_pnl_sum = summary_df["P&L หักล้างสุทธิ (บาท)"].sum()
+        # คำนวณผลรวม P&L จากตัวเลขจริงก่อนจัดรูปแบบสตริง
+        raw_pnl_list = []
+        for item in summary_list:
+            val_str = str(item["P&L หักล้างสุทธิ (บาท)"]).replace(",", "")
+            try:
+                raw_pnl_list.append(float(val_str))
+            except:
+                raw_pnl_list.append(0.0)
+        total_pnl_sum = sum(raw_pnl_list)
+        
         total_sum_row = pd.DataFrame([{
             "ลำดับ": "",
             "พอร์ต": "รวมทั้งหมด", "ซีรีส์": "-", "Strike": "-", "ประเภท": "-",
             "Open": "", "Close": "", 
-            "P&L หักล้างสุทธิ (บาท)": round(total_pnl_sum, 2)
+            "P&L หักล้างสุทธิ (บาท)": f"{round(total_pnl_sum, 2):,}"
         }])
         summary_df = pd.concat([summary_df, total_sum_row], ignore_index=True)
     
-    st.markdown(summary_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+    # แสดงผลผ่านคอนเทนเนอร์เลื่อนบาร์แนวนอน (scrollable-table-container)
+    table_html = summary_df.to_html(escape=False, index=False)
+    st.markdown(f'<div class="scrollable-table-container">{table_html}</div>', unsafe_allow_html=True)
 else:
     st.info("ไม่มีสัญญาในตลาดนี้")
 

@@ -261,7 +261,7 @@ def bs_greeks(S, K, T, r, sigma, option_type):
     vega = S * norm.pdf(d1) * np.sqrt(T) / 100.0
     return {"Delta": delta, "Gamma": gamma, "Theta": theta, "Vega": vega}
 
-# --- UI หลัก: เปลี่ยนชื่อหัวข้อเป็น Futures & Options Payoff ---
+# --- UI หลัก: Futures & Options Payoff ---
 st.title("📈 Futures & Options Payoff")
 
 # --- Sidebar ---
@@ -345,7 +345,7 @@ prefix_code = "USD" if selected_market == "TFEX USD/THB" else "S50"
 month_codes = ["H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]
 generated_series_options = [f"{prefix_code}{m}{yr}" for yr in [short_year, next_short_year] for m in month_codes]
 
-# --- ฟอร์มเพิ่มสัญญา (วางตัวเลือกสถานะและ RefID ไว้ข้างนอกฟอร์มเพื่อให้ทำงานแบบไดนามิกได้ทันที) ---
+# --- ฟอร์มเพิ่มสัญญา ---
 st.sidebar.subheader("➕ เพิ่มสัญญา")
 
 position_status = st.sidebar.selectbox("สถานะ", options=["Open", "Close"], index=0)
@@ -648,7 +648,7 @@ if not journal_df.empty:
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 1: Net Expiry Payoff
+# กราฟที่ 1: Net Expiry Payoff (ปรับแยกสีพื้นที่ใต้กราฟ ฟ้า/แดง)
 # ==========================================
 st.subheader(f"📈 1. Payoff วันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วย", ["บาทรวม (THB)", "จุด (Points)"])
@@ -750,7 +750,40 @@ be_str = ", ".join([f"`{bp:,.2f}`" for bp in be_points]) if be_points else "ไ�
 st.markdown(f"💡 **จุดคุ้มทุน (BE):** {be_str}")
 st.markdown("<br>", unsafe_allow_html=True)
 
-fig.add_trace(go.Scatter(x=price_range, y=total_payoff, mode='lines', name='Net Payoff', line=dict(color='blue', width=3), fill='tozeroy', fillcolor='rgba(0, 123, 255, 0.1)'))
+# --- วาดกราฟ Net Expiry Payoff พร้อมแยกสีพื้นที่กำไร (ฟ้า) และขาดทุน (แดงอ่อน) ---
+# พื้นที่กำไร (y >= 0)
+fig.add_trace(go.Scatter(
+    x=price_range, 
+    y=np.where(total_payoff >= 0, total_payoff, 0), 
+    mode='lines', 
+    name='Profit Zone', 
+    line=dict(width=0), 
+    fill='tozeroy', 
+    fillcolor='rgba(0, 123, 255, 0.15)',
+    showlegend=False
+))
+
+# พื้นที่ขาดทุน (y < 0)
+fig.add_trace(go.Scatter(
+    x=price_range, 
+    y=np.where(total_payoff < 0, total_payoff, 0), 
+    mode='lines', 
+    name='Loss Zone', 
+    line=dict(width=0), 
+    fill='tozeroy', 
+    fillcolor='rgba(255, 0, 0, 0.12)',
+    showlegend=False
+))
+
+# เส้นกราฟหลัก Net Payoff
+fig.add_trace(go.Scatter(
+    x=price_range, 
+    y=total_payoff, 
+    mode='lines', 
+    name='Net Payoff', 
+    line=dict(color='blue', width=3)
+))
+
 if be_points:
     fig.add_trace(go.Scatter(x=be_points, y=[0]*len(be_points), mode='markers+text', name='Break-even', marker=dict(color='orange', size=10, symbol='diamond'), text=[f"BE: {bp:.2f}" for bp in be_points], textposition="bottom center"))
 

@@ -9,7 +9,7 @@ from scipy.stats import norm
 
 # ตั้งค่าหน้าเว็บให้รองรับการใช้งานบนมือถือ (Mobile Responsive)
 st.set_page_config(
-    page_title="TFEX Multi-Asset Payoff & Greeks Dashboard", 
+    page_title="TFEX Payoff & Greeks Pro", 
     layout="wide",
     initial_sidebar_state="auto"
 )
@@ -354,13 +354,15 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
     position_status = st.selectbox("สถานะ", options=["Open", "Close"], index=0)
     position_type = st.selectbox("ประเภท", options=["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"], index=0)
     
+    # เพิ่มส่วนเลือกจับคู่ปิดกับบรรทัด Open ID
     ref_id_input = 0
     if position_status == "Close":
         open_list = trades_df[trades_df["Status"] == "Open"]
         if not open_list.empty:
-            ref_id_input = st.selectbox("จับคู่ Open ID", options=open_list["ID"].tolist())
+            open_ids = open_list["ID"].tolist()
+            ref_id_input = st.selectbox("จับคู่ปิดกับ Open ID บรรทัดที่", options=open_ids)
         else:
-            st.warning("ยังไม่มี Open")
+            st.warning("ยังไม่มีสถานะ Open ในพอร์ตสำหรับจับคู่ปิด")
             
     strike_input_str = st.text_input("Strike Price", value="")
     premium = st.number_input("พรีเมี่ยม / ราคาปิด", value=0.0, format="%.2f")

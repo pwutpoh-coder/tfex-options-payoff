@@ -9,7 +9,7 @@ from scipy.stats import norm
 
 # ตั้งค่าหน้าเว็บให้รองรับการใช้งานบนมือถือ (Mobile Responsive)
 st.set_page_config(
-    page_title="TFEX Multi-Asset Payoff & Greeks Dashboard Pro", 
+    page_title="TFEX Multi-Asset Payoff & Greeks Dashboard", 
     layout="wide",
     initial_sidebar_state="auto"
 )
@@ -22,9 +22,9 @@ st.markdown("""
     <style>
     .stMetric {
         background-color: #f8f9fa;
-        padding: 10px;
-        border-radius: 8px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        padding: 8px;
+        border-radius: 6px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     }
     .badge-long-fu { background-color: #e2f0d9; color: #385723; padding: 2px 6px; border-radius: 4px; font-weight: 500; font-size: 11px; }
     .badge-short-fu { background-color: #fce4d6; color: #c65911; padding: 2px 6px; border-radius: 4px; font-weight: 500; font-size: 11px; }
@@ -33,13 +33,12 @@ st.markdown("""
     .badge-long-put { background-color: #fff2cc; color: #7f6000; padding: 2px 6px; border-radius: 4px; font-weight: 500; font-size: 11px; }
     .badge-short-put { background-color: #e1d5e7; color: #351c75; padding: 2px 6px; border-radius: 4px; font-weight: 500; font-size: 11px; }
     
-    /* สไตล์สำหรับตารางสรุปให้เลื่อนบาร์แนวนอนได้และแสดงเป็นบรรทัดเดียว */
     .scrollable-table-container {
         width: 100%;
         overflow-x: auto;
         white-space: nowrap;
         border: 1px solid #e9ecef;
-        border-radius: 8px;
+        border-radius: 6px;
         padding: 4px;
         background-color: #ffffff;
     }
@@ -49,7 +48,7 @@ st.markdown("""
         font-size: 13px;
     }
     .scrollable-table-container th, .scrollable-table-container td {
-        padding: 8px 12px;
+        padding: 6px 10px;
         text-align: left;
         border-bottom: 1px solid #dee2e6;
     }
@@ -67,7 +66,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- ฟังก์ชันจัดการไฟล์พอร์ตหลายพอร์ต และระบบประวัติถาวร (Archive & Backup) ---
+# --- ฟังก์ชันจัดการไฟล์พอร์ตและระบบสำรองข้อมูล ---
 ARCHIVE_FILE = "trade_history_archive.csv"
 BACKUP_DIR = "backup_portfolios"
 
@@ -110,7 +109,7 @@ def get_portfolio_summary():
             except:
                 num_trades = 0
             file_size = os.path.getsize(f)
-            mod_time = datetime.fromtimestamp(os.path.getmtime(f), BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S")
+            mod_time = datetime.fromtimestamp(os.path.getmtime(f), BANGKOK_TZ).strftime("%Y-%m-%d %H:%M")
         else:
             num_trades = 0
             file_size = 0
@@ -118,8 +117,8 @@ def get_portfolio_summary():
         summary_data.append({
             "พอร์ต": f,
             "รายการ": num_trades,
-            "ขนาด (B)": file_size,
-            "แก้ไขล่าสุด": mod_time
+            "ขนาด": f"{file_size} B",
+            "แก้ไข": mod_time
         })
     return pd.DataFrame(summary_data)
 
@@ -151,7 +150,6 @@ def load_trades_from_file(file_name):
 
 def save_trades_to_file(df, file_name):
     df.to_csv(file_name, index=False)
-    
     backup_path = os.path.join(BACKUP_DIR, f"{file_name}.bak")
     df.to_csv(backup_path, index=False)
     
@@ -167,7 +165,7 @@ def save_trades_to_file(df, file_name):
     updated_arch = pd.concat([df_arch, df_copy], ignore_index=True).drop_duplicates(subset=["PortfolioSource", "ID", "TradeDate", "Strike", "Type"], keep="last")
     updated_arch.to_csv(ARCHIVE_FILE, index=False)
 
-# --- ฟังก์ชันจัดการสมุดบันทึกประจำพอร์ต ---
+# --- สมุดบันทึกประจำพอร์ต ---
 def get_journal_filename(portfolio_name):
     return f"journal_{portfolio_name}.csv"
 
@@ -199,22 +197,17 @@ def save_journal_entry(portfolio_name, title, spot, vol, pnl, notes):
     df_j = pd.concat([df_j, new_entry], ignore_index=True)
     df_j.to_csv(j_file, index=False)
 
-# --- ดึงข้อมูลราคาและคำนวณ Volatility จาก Yahoo Finance ---
+# --- ดึงข้อมูลตลาด ---
 @st.cache_data(ttl=10)
 def get_market_data(market_type):
     try:
         if market_type == "TFEX USD/THB":
-            ticker_str = "THB=X"
-            default_p = 35.0
-            default_v = 0.08
+            ticker_str, default_p, default_v = "THB=X", 35.0, 0.08
         else:
-            ticker_str = "^SET50.BK"
-            default_p = 950.0
-            default_v = 0.18
+            ticker_str, default_p, default_v = "^SET50.BK", 950.0, 0.18
             
         ticker = yf.Ticker(ticker_str)
         price = None
-        
         if hasattr(ticker, "fast_info") and "last_price" in ticker.fast_info:
             price = float(ticker.fast_info["last_price"])
         
@@ -230,139 +223,107 @@ def get_market_data(market_type):
         if not price:
             price = float(hist['Close'].iloc[-1]) if not hist.empty else default_p
                 
-        update_time = datetime.now(BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S (ICT)")
+        update_time = datetime.now(BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S")
         return price, calc_vol, update_time
     except:
         default_p = 35.0 if market_type == "TFEX USD/THB" else 950.0
         default_v = 0.08 if market_type == "TFEX USD/THB" else 0.18
-        update_time = datetime.now(BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S (ICT)")
+        update_time = datetime.now(BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S")
         return default_p, default_v, update_time
 
-# --- Black-Scholes Option Pricing ---
+# --- Black-Scholes ---
 def bs_option_price(S, K, T, r, sigma, option_type):
     if T <= 0:
         return np.maximum(0, S - K) if option_type == "Call" else np.maximum(0, K - S)
-    
     vol = sigma if sigma > 0 else 0.15
     d1 = (np.log(S / K) + (r + 0.5 * vol ** 2) * T) / (vol * np.sqrt(T))
     d2 = d1 - vol * np.sqrt(T)
-    
     if option_type == "Call":
         return S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
     else:
         return K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-1 * d1)
 
-# --- Greeks Calculation ---
 def bs_greeks(S, K, T, r, sigma, option_type):
     if T <= 0:
         delta = (1.0 if S > K else 0.0) if option_type == "Call" else (-1.0 if S < K else 0.0)
         return {"Delta": delta, "Gamma": 0.0, "Theta": 0.0, "Vega": 0.0}
-    
     vol = sigma if sigma > 0 else 0.15
     d1 = (np.log(S / K) + (r + 0.5 * vol ** 2) * T) / (vol * np.sqrt(T))
     d2 = d1 - vol * np.sqrt(T)
-    
     if option_type == "Call":
         delta = norm.cdf(d1)
         theta = (- (S * norm.pdf(d1) * vol) / (2 * np.sqrt(T)) - r * K * np.exp(-r * T) * norm.cdf(d2)) / 365.0
     else:
         delta = norm.cdf(d1) - 1
         theta = (- (S * norm.pdf(d1) * vol) / (2 * np.sqrt(T)) + r * K * np.exp(-r * T) * norm.cdf(-d2)) / 365.0
-        
     gamma = norm.pdf(d1) / (S * vol * np.sqrt(T))
     vega = S * norm.pdf(d1) * np.sqrt(T) / 100.0
-    
     return {"Delta": delta, "Gamma": gamma, "Theta": theta, "Vega": vega}
 
 # --- UI หลัก ---
-st.title("📈 TFEX Multi-Asset Options & Futures Pro")
-st.markdown("ระบบวิเคราะห์ Payoff Chart และความเสี่ยงพอร์ต TFEX (บันทึกข้อมูลอัตโนมัติ & สำรองไฟล์ถาวร)")
+st.title("📈 TFEX Payoff & Greeks Pro")
 
 # --- Sidebar ---
 st.sidebar.header("📁 จัดการพอร์ต")
 available_portfolios = get_available_portfolios()
-selected_portfolio_tab = st.sidebar.selectbox("เลือกพอร์ต", available_portfolios)
-active_portfolio = selected_portfolio_tab
+active_portfolio = st.sidebar.selectbox("เลือกพอร์ต", available_portfolios)
 
-# --- ระบบจัดการไฟล์อัปโหลดพร้อมปุ่มยืนยันและตั้งชื่อพอร์ตปลายทาง ---
 st.sidebar.markdown("---")
-st.sidebar.subheader("💾 สำรอง / กู้คืน / นำเข้าไฟล์พอร์ต")
-
+st.sidebar.subheader("💾 สำรอง / นำเข้า")
 current_df_for_download = load_trades_from_file(active_portfolio)
 csv_bytes = current_df_for_download.to_csv(index=False).encode('utf-8')
-st.sidebar.download_button(
-    label=f"📥 ดาวน์โหลดไฟล์ `{active_portfolio}`",
-    data=csv_bytes,
-    file_name=active_portfolio,
-    mime="text/csv",
-    help="ดาวน์โหลดไฟล์ CSV นี้เก็บไว้ในเครื่องคอมพิวเตอร์ของคุณ"
-)
+st.sidebar.download_button(label=f"📥 ดาวน์โหลด `{active_portfolio}`", data=csv_bytes, file_name=active_portfolio, mime="text/csv")
 
-st.sidebar.markdown("---")
-uploaded_file = st.sidebar.file_uploader("📤 อัปโหลดไฟล์พอร์ตจากเครื่อง", type=["csv"], help="เลือกไฟล์ CSV ที่เคยดาวน์โหลดไว้เพื่อนำเข้าสู่ระบบ")
-
+uploaded_file = st.sidebar.file_uploader("📤 อัปโหลดพอร์ต", type=["csv"])
 if uploaded_file is not None:
-    st.sidebar.info("📂 ตรวจพบไฟล์ที่อัปโหลด กรุณาระบุชื่อพอร์ตปลายทางด้านล่างเพื่อยืนยันการนำเข้า")
-    import_target_name = st.sidebar.text_input("ตั้งชื่อไฟล์พอร์ตปลายทาง (เช่น my_imported_port.csv)", value=uploaded_file.name)
-    
+    import_target_name = st.sidebar.text_input("ชื่อไฟล์ปลายทาง", value=uploaded_file.name)
     col_imp1, col_imp2 = st.sidebar.columns(2)
     with col_imp1:
-        if st.button("✅ ยืนยันนำเข้าไฟล์นี้"):
+        if st.button("✅ ยืนยัน"):
             if import_target_name:
-                if not import_target_name.endswith(".csv"):
-                    import_target_name += ".csv"
+                if not import_target_name.endswith(".csv"): import_target_name += ".csv"
                 try:
                     uploaded_file.seek(0)
-                    imported_df = pd.read_csv(uploaded_file)
-                    save_trades_to_file(imported_df, import_target_name)
-                    st.sidebar.success(f"นำเข้าและบันทึกข้อมูลลงพอร์ต `{import_target_name}` สำเร็จ!")
+                    save_trades_to_file(pd.read_csv(uploaded_file), import_target_name)
+                    st.sidebar.success("สำเร็จ!")
                     st.rerun()
                 except Exception as e:
-                    st.sidebar.error(f"เกิดข้อผิดพลาดในการอ่านไฟล์: {e}")
-            else:
-                st.sidebar.warning("กรุณาตั้งชื่อไฟล์ปลายทางก่อน")
+                    st.sidebar.error(f"ผิดพลาด: {e}")
     with col_imp2:
-        if st.button("❌ ยกเลิก"):
-            st.rerun()
+        if st.button("❌ ยกเลิก"): st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("➕ สร้างพอร์ตใหม่")
-new_port_name = st.sidebar.text_input("ชื่อไฟล์พอร์ตใหม่ (เช่น portfolio_4.csv หรือ my_strategy.csv)")
+new_port_name = st.sidebar.text_input("ชื่อไฟล์พอร์ต (เช่น port_new.csv)")
 if st.sidebar.button("สร้างพอร์ต"):
     if new_port_name:
-        if not new_port_name.endswith(".csv"):
-            new_port_name += ".csv"
+        if not new_port_name.endswith(".csv"): new_port_name += ".csv"
         if not os.path.exists(new_port_name):
-            empty_df = pd.DataFrame(columns=[
-                "ID", "Market", "Strategy", "Series", "Type", "Status", 
-                "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot", "RefID"
-            ])
-            save_trades_to_file(empty_df, new_port_name)
+            save_trades_to_file(pd.DataFrame(columns=["ID", "Market", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "Commission", "TradeDate", "ExpiryDate", "EntrySpot", "RefID"]), new_port_name)
             st.sidebar.success("สร้างสำเร็จ!")
-            active_portfolio = new_port_name
             st.rerun()
         else:
-            st.sidebar.warning("ชื่อซ้ำในระบบ")
+            st.sidebar.warning("ชื่อซ้ำ")
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📂 สรุปพอร์ตทั้งหมด")
+st.sidebar.subheader("📂 สรุปพอร์ต")
 st.sidebar.dataframe(get_portfolio_summary(), use_container_width=True, hide_index=True)
 
 st.sidebar.markdown("---")
 st.sidebar.header("⚙ ตั้งค่าตลาด")
-selected_market = st.sidebar.selectbox("เลือกตลาด", ["TFEX USD/THB", "TFEX SET50"])
+selected_market = st.sidebar.selectbox("ตลาด", ["TFEX USD/THB", "TFEX SET50"])
 
 current_spot, auto_volatility, last_update_time = get_market_data(selected_market)
 
 col_head1, col_head2 = st.columns([1, 2])
 with col_head1:
-    if st.button("🔄 รีเฟรชราคา"):
+    if st.button("🔄 รีเฟรช"):
         st.cache_data.clear()
         st.rerun()
 with col_head2:
     st.metric(label=f"Spot ({selected_market})", value=f"{current_spot:,.4f}")
 
-st.markdown(f"*อัปเดต:* `{last_update_time}`")
+st.markdown(f"*อัปเดตล่าสุด:* `{last_update_time}`")
 st.markdown("---")
 
 spot_price = st.sidebar.number_input("ราคาอ้างอิง", value=float(current_spot), format="%.4f")
@@ -372,8 +333,6 @@ risk_free_rate = 0.025
 contract_multiplier = 1000 if selected_market == "TFEX USD/THB" else 200
 
 trades_df = load_trades_from_file(active_portfolio)
-
-# แปลงประเภท ID และ RefID ให้เป็น Integer เพื่อป้องกันปัญหาการอ่านค่าจาก CSV
 if not trades_df.empty:
     trades_df["ID"] = pd.to_numeric(trades_df["ID"], errors='coerce').fillna(0).astype(int)
     trades_df["RefID"] = pd.to_numeric(trades_df["RefID"], errors='coerce').fillna(0).astype(int)
@@ -383,16 +342,14 @@ short_year = str(current_year)[-2:]
 next_short_year = str(current_year + 1)[-2:]
 prefix_code = "USD" if selected_market == "TFEX USD/THB" else "S50"
 month_codes = ["H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]
-
 generated_series_options = [f"{prefix_code}{m}{yr}" for yr in [short_year, next_short_year] for m in month_codes]
 
-# --- ฟอร์มเพิ่มสัญญา (พร้อมเลือก RefID กรณีสถานะเป็น Close) ---
-st.sidebar.subheader("➕ เพิ่มสัญญาใหม่")
-if "form_key" not in st.session_state:
-    st.session_state["form_key"] = 0
+# --- ฟอร์มเพิ่มสัญญา ---
+st.sidebar.subheader("➕ เพิ่มสัญญา")
+if "form_key" not in st.session_state: st.session_state["form_key"] = 0
 
 with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
-    strategy_name = st.text_input("ชื่อกลยุทธ์", value="")
+    strategy_name = st.text_input("กลยุทธ์", value="")
     series_name = st.selectbox("ซีรีส์", options=generated_series_options, index=0)
     position_status = st.selectbox("สถานะ", options=["Open", "Close"], index=0)
     position_type = st.selectbox("ประเภท", options=["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"], index=0)
@@ -401,34 +358,31 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
     if position_status == "Close":
         open_list = trades_df[trades_df["Status"] == "Open"]
         if not open_list.empty:
-            open_ids = open_list["ID"].tolist()
-            ref_id_input = st.selectbox("จับคู่ปิดกับ Open ID บรรทัดที่", options=open_ids)
+            ref_id_input = st.selectbox("จับคู่ Open ID", options=open_list["ID"].tolist())
         else:
-            st.warning("ยังไม่มีสถานะ Open ในพอร์ตสำหรับจับคู่ปิด")
+            st.warning("ยังไม่มี Open")
             
-    strike_input_str = st.text_input("Strike Price", value="", placeholder="เช่น 950 หรือ 33.5")
-
-    premium = st.number_input("ราคาพรีเมี่ยม / ราคาปิด", value=0.0, format="%.2f")
-    contracts = st.number_input("จำนวนสัญญา", value=1, min_value=1, step=1)
-    commission = st.number_input("ค่าคอมฯ รวม/สัญญา", value=0.0, format="%.2f")
-    
-    trade_date = st.date_input("วันที่ซื้อ", value=date.today())
+    strike_input_str = st.text_input("Strike Price", value="")
+    premium = st.number_input("พรีเมี่ยม / ราคาปิด", value=0.0, format="%.2f")
+    contracts = st.number_input("สัญญา", value=1, min_value=1, step=1)
+    commission = st.number_input("ค่าคอมฯ/สัญญา", value=0.0, format="%.2f")
+    trade_date = st.date_input("วันที่เทรด", value=date.today())
     expiry_date = st.date_input("วันหมดอายุ", value=date.today() + timedelta(days=30))
     
-    confirm_add = st.checkbox("☑ ยืนยันข้อมูล", value=False)
-    submitted = st.form_submit_button("บันทึกสัญญา")
+    confirm_add = st.checkbox("☑ ยืนยัน", value=False)
+    submitted = st.form_submit_button("บันทึก")
     
     if submitted:
         if not confirm_add:
-            st.sidebar.error("โปรดติ๊กยืนยันข้อมูล")
+            st.sidebar.error("โปรดติ๊กยืนยัน")
         elif not strike_input_str.strip():
-            st.sidebar.error("โปรดระบุ Strike Price")
+            st.sidebar.error("โปรดระบุ Strike")
         else:
             try:
                 strike_val = float(strike_input_str.strip())
             except ValueError:
-                st.sidebar.error("รูปแบบ Strike Price ไม่ถูกต้อง กรุณากรอกเป็นตัวเลข")
                 strike_val = None
+                st.sidebar.error("Strike ไม่ถูกต้อง")
                 
             if strike_val is not None:
                 new_id = int(trades_df["ID"].max() + 1) if not trades_df.empty and "ID" in trades_df.columns and not pd.isna(trades_df["ID"].max()) else 1
@@ -444,8 +398,8 @@ with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
                 st.session_state["form_key"] += 1
                 st.rerun()
 
-# --- ตารางแก้ไขข้อมูล (สามารถแก้ไขค่า RefID ได้โดยตรงในตาราง) ---
-st.subheader(f"📋 จัดการข้อมูลพอร์ต: `{active_portfolio}` (แก้ไข RefID เพื่อเปลี่ยนคู่จับคู่ได้ที่นี่)")
+# --- ตารางจัดการข้อมูล ---
+st.subheader(f"📋 จัดการพอร์ต: `{active_portfolio}`")
 active_df_to_use = trades_df.copy()
 
 if not trades_df.empty:
@@ -454,11 +408,10 @@ if not trades_df.empty:
     
     col_b1, col_b2 = st.columns(2)
     with col_b1:
-        if st.button("💾 บันทึกการแก้ไขตาราง"):
+        if st.button("💾 บันทึกตาราง"):
             save_trades_to_file(edited_df, active_portfolio)
             st.success("บันทึกสำเร็จ!")
             st.rerun()
-            
     st.markdown("---")
     del_id = st.selectbox("เลือก ID ที่ต้องการลบ", options=edited_df["ID"].tolist() if not edited_df.empty else [])
     confirm_del = st.checkbox("ยืนยันการลบ", value=False)
@@ -469,14 +422,14 @@ if not trades_df.empty:
             st.success("ลบเรียบร้อย")
             st.rerun()
         else:
-            st.warning("โปรดติ๊กยืนยันการลบ")
+            st.warning("โปรดติ๊กยืนยัน")
 else:
-    st.info("พอร์ตว่าง ไม่มีรายการเทรด")
+    st.info("พอร์ตว่าง")
 
 # --- รวมพอร์ต & Archive ---
 st.markdown("<br>", unsafe_allow_html=True)
-st.subheader("🔀 รวมพอร์ตและประวัติถาวร")
-tab_m1, tab_m2 = st.tabs(["เลือกพอร์ตวิเคราะห์", "ประวัติถาวร (Archive)"])
+st.subheader("🔀 รวมพอร์ตและประวัติ")
+tab_m1, tab_m2 = st.tabs(["เลือกพอร์ตวิเคราะห์", "ประวัติ (Archive)"])
 
 with tab_m1:
     selected_ports = st.multiselect("เลือกพอร์ต", options=available_portfolios, default=[active_portfolio])
@@ -496,12 +449,11 @@ with tab_m2:
         arch_df = pd.read_csv(ARCHIVE_FILE)
         if not arch_df.empty:
             arch_ports = arch_df["PortfolioSource"].unique().tolist() if "PortfolioSource" in arch_df.columns else []
-            sel_arch = st.selectbox("เลือกพอร์ตจาก Archive", options=arch_ports)
+            sel_arch = st.selectbox("เลือกจาก Archive", options=arch_ports)
             filt_arch = arch_df[arch_df["PortfolioSource"] == sel_arch] if sel_arch else arch_df
             st.dataframe(filt_arch, use_container_width=True)
-            if st.button("📥 กู้คืนข้อมูลชุดนี้"):
-                restore_clean = filt_arch.drop(columns=["PortfolioSource", "SavedAt"], errors="ignore")
-                save_trades_to_file(restore_clean, active_portfolio)
+            if st.button("📥 กู้คืนชุดนี้"):
+                save_trades_to_file(filt_arch.drop(columns=["PortfolioSource", "SavedAt"], errors="ignore"), active_portfolio)
                 st.success("กู้คืนสำเร็จ!")
                 st.rerun()
 
@@ -514,8 +466,8 @@ if not combined_trades_df.empty and "Market" in combined_trades_df.columns:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- สรุปจำนวนสัญญาแยกตามประเภท (Summary of Contracts by Type) ---
-st.subheader("📊 สรุปจำนวนสัญญาแยกตามประเภท")
+# --- สรุปสัญญาแยกตามประเภท ---
+st.subheader("📊 สรุปสัญญา")
 if not market_trades.empty:
     types_list = ["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"]
     contract_summary_data = []
@@ -523,7 +475,6 @@ if not market_trades.empty:
     for t_item in types_list:
         sub_df = market_trades[market_trades["Type"] == t_item]
         total_cnt = sub_df["Contracts"].sum() if not sub_df.empty else 0
-        
         open_rows = sub_df[sub_df["Status"] == "Open"]
         close_rows = sub_df[sub_df["Status"] == "Close"]
         open_cnt = open_rows["Contracts"].sum() if not open_rows.empty else 0
@@ -537,34 +488,29 @@ if not market_trades.empty:
         elif "Long Put" in t_item: badge_class = "badge-long-put"
         elif "Short Put" in t_item: badge_class = "badge-short-put"
         
-        type_html = f'<span class="{badge_class}">{t_item}</span>'
-        
         contract_summary_data.append({
-            "ประเภทสัญญา": type_html,
-            "ทั้งหมด (สัญญา)": int(total_cnt),
-            "เปิด (Open)": int(open_cnt),
-            "ปิด (Close)": int(close_cnt),
-            "คงเหลือเปิด (Net Open)": int(net_open_cnt)
+            "ประเภท": f'<span class="{badge_class}">{t_item}</span>',
+            "ทั้งหมด": int(total_cnt),
+            "Open": int(open_cnt),
+            "Close": int(close_cnt),
+            "คงเหลือ": int(net_open_cnt)
         })
-    
-    cs_df = pd.DataFrame(contract_summary_data)
-    st.markdown(cs_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+    st.markdown(pd.DataFrame(contract_summary_data).to_html(escape=False, index=False), unsafe_allow_html=True)
 else:
-    st.info("ไม่มีข้อมูลสัญญาในตลาดนี้สำหรับการสรุปจำนวน")
+    st.info("ไม่มีสัญญาในตลาดนี้")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (แบบกระชับ บรรทัดเดียว เลื่อนบาร์แนวนอนได้) ---
-st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน")
+# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (บรรทัดเดียว เลื่อนบาร์ได้) ---
+st.subheader("📊 สถานะและ P&L ปัจจุบัน")
 total_pnl_sum = 0.0
 if not market_trades.empty:
     summary_list = []
-    
     open_trades_df = market_trades[market_trades["Status"] == "Open"]
     close_trades_df = market_trades[market_trades["Status"] == "Close"]
     
     matched_close_ids = set()
-    row_seq = 1  # สำหรับนับลำดับการจัดการพอร์ต
+    row_seq = 1
     
     for _, open_row in open_trades_df.iterrows():
         p_src = open_row.get("Source_Portfolio", active_portfolio)
@@ -573,7 +519,6 @@ if not market_trades.empty:
         open_qty, open_prem = int(open_row["Contracts"]), float(open_row["Premium"])
         comm_unit_open = float(open_row["Commission"])
         
-        # ค้นหาคำสั่ง Close ที่จับคู่ผ่าน RefID หรือจับคู่อัตโนมัติกรณี RefID เป็น 0
         matching_closes = close_trades_df[
             (close_trades_df["RefID"] == open_id) | 
             ((close_trades_df["RefID"] == 0) & 
@@ -600,26 +545,17 @@ if not market_trades.empty:
         if rem_qty > 0:
             mult_qty = rem_qty * contract_multiplier
             comm_rem = comm_unit_open * rem_qty
-            if p_type == "Long Futures":
-                rem_pnl = (spot_price - stk) * mult_qty - comm_rem
-            elif p_type == "Short Futures":
-                rem_pnl = (stk - spot_price) * mult_qty - comm_rem
-            elif p_type == "Long Call Option":
-                rem_pnl = (np.maximum(0, spot_price - stk) - open_prem) * mult_qty - comm_rem
-            elif p_type == "Short Call Option":
-                rem_pnl = (open_prem - np.maximum(0, spot_price - stk)) * mult_qty - comm_rem
-            elif p_type == "Long Put Option":
-                rem_pnl = (np.maximum(0, stk - spot_price) - open_prem) * mult_qty - comm_rem
-            elif p_type == "Short Put Option":
-                rem_pnl = (open_prem - np.maximum(0, stk - spot_price)) * mult_qty - comm_rem
+            if p_type == "Long Futures": rem_pnl = (spot_price - stk) * mult_qty - comm_rem
+            elif p_type == "Short Futures": rem_pnl = (stk - spot_price) * mult_qty - comm_rem
+            elif p_type == "Long Call Option": rem_pnl = (np.maximum(0, spot_price - stk) - open_prem) * mult_qty - comm_rem
+            elif p_type == "Short Call Option": rem_pnl = (open_prem - np.maximum(0, spot_price - stk)) * mult_qty - comm_rem
+            elif p_type == "Long Put Option": rem_pnl = (np.maximum(0, stk - spot_price) - open_prem) * mult_qty - comm_rem
+            elif p_type == "Short Put Option": rem_pnl = (open_prem - np.maximum(0, stk - spot_price)) * mult_qty - comm_rem
         
         if matching_closes.empty:
             summary_list.append({
-                "ลำดับ": row_seq,
-                "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
-                "Open": f"ID {open_id} ({open_qty} สัญญา)", 
-                "Close": "", 
-                "P&L หักล้างสุทธิ (บาท)": f"{round(rem_pnl, 2):,}"
+                "ลำดับ": row_seq, "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
+                "Open": f"ID {open_id} ({open_qty} สัญญา)", "Close": "", "P&L สุทธิ (บาท)": f"{round(rem_pnl, 2):,}"
             })
             row_seq += 1
         else:
@@ -634,24 +570,16 @@ if not market_trades.empty:
                 mult_c = c_qty * contract_multiplier
                 
                 if "Futures" in p_type:
-                    if "Long" in p_type:
-                        c_pnl = ((c_strike_close - stk) * mult_c) - c_comm
-                    else:
-                        c_pnl = ((stk - c_strike_close) * mult_c) - c_comm
+                    c_pnl = ((c_strike_close - stk) * mult_c) - c_comm if "Long" in p_type else ((stk - c_strike_close) * mult_c) - c_comm
                 else:
-                    if "Long" in p_type:
-                        c_pnl = ((c_prem - open_prem) * mult_c) - c_comm
-                    else:
-                        c_pnl = ((open_prem - c_prem) * mult_c) - c_comm
+                    c_pnl = ((c_prem - open_prem) * mult_c) - c_comm if "Long" in p_type else ((open_prem - c_prem) * mult_c) - c_comm
                 
                 total_paired_pnl = rem_pnl + c_pnl
-                
                 summary_list.append({
-                    "ลำดับ": row_seq,
-                    "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
-                    "Open": f"ID {open_id} (คงเหลือ {rem_qty})" if rem_qty > 0 else f"ID {open_id} (ปิดหมด)", 
+                    "ลำดับ": row_seq, "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
+                    "Open": f"ID {open_id} (เหลือ {rem_qty})" if rem_qty > 0 else f"ID {open_id} (ปิดหมด)", 
                     "Close": f"ID {c_id} ({c_qty} @ {c_strike_close if 'Futures' in p_type else c_prem})", 
-                    "P&L หักล้างสุทธิ (บาท)": f"{round(total_paired_pnl, 2):,}"
+                    "P&L สุทธิ (บาท)": f"{round(total_paired_pnl, 2):,}"
                 })
                 row_seq += 1
 
@@ -674,50 +602,34 @@ if not market_trades.empty:
         type_badge_html = f'<span class="{badge_class}">{p_type}</span>'
         
         standalone_pnl = (c_prem * mult_c) - c_comm
-        
         summary_list.append({
-            "ลำดับ": row_seq,
-            "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
-            "Open": "-", 
-            "Close": f"ID {c_id} (Unmatched, {c_qty} สัญญา)", 
-            "P&L หักล้างสุทธิ (บาท)": f"{round(standalone_pnl, 2):,}"
+            "ลำดับ": row_seq, "พอร์ต": p_src, "ซีรีส์": ser, "Strike": stk, "ประเภท": type_badge_html,
+            "Open": "-", "Close": f"ID {c_id} (Unmatched, {c_qty} สัญญา)", "P&L สุทธิ (บาท)": f"{round(standalone_pnl, 2):,}"
         })
         row_seq += 1
 
     summary_df = pd.DataFrame(summary_list)
     if not summary_df.empty:
-        # คำนวณผลรวม P&L จากตัวเลขจริงก่อนจัดรูปแบบสตริง
-        raw_pnl_list = []
-        for item in summary_list:
-            val_str = str(item["P&L หักล้างสุทธิ (บาท)"]).replace(",", "")
-            try:
-                raw_pnl_list.append(float(val_str))
-            except:
-                raw_pnl_list.append(0.0)
+        raw_pnl_list = [float(str(item["P&L สุทธิ (บาท)"]).replace(",", "")) for item in summary_list]
         total_pnl_sum = sum(raw_pnl_list)
-        
         total_sum_row = pd.DataFrame([{
-            "ลำดับ": "",
-            "พอร์ต": "รวมทั้งหมด", "ซีรีส์": "-", "Strike": "-", "ประเภท": "-",
-            "Open": "", "Close": "", 
-            "P&L หักล้างสุทธิ (บาท)": f"{round(total_pnl_sum, 2):,}"
+            "ลำดับ": "", "พอร์ต": "รวมทั้งหมด", "ซีรีส์": "-", "Strike": "-", "ประเภท": "-",
+            "Open": "", "Close": "", "P&L สุทธิ (บาท)": f"{round(total_pnl_sum, 2):,}"
         }])
         summary_df = pd.concat([summary_df, total_sum_row], ignore_index=True)
     
-    # แสดงผลผ่านคอนเทนเนอร์เลื่อนบาร์แนวนอน (scrollable-table-container)
-    table_html = summary_df.to_html(escape=False, index=False)
-    st.markdown(f'<div class="scrollable-table-container">{table_html}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="scrollable-table-container">{summary_df.to_html(escape=False, index=False)}</div>', unsafe_allow_html=True)
 else:
     st.info("ไม่มีสัญญาในตลาดนี้")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- สมุดบันทึกประจำพอร์ต ---
-st.subheader(f"📝 สมุดบันทึกพอร์ต: `{active_portfolio}`")
+# --- สมุดบันทึกพอร์ต ---
+st.subheader(f"📝 บันทึก: `{active_portfolio}`")
 with st.form("journal_form"):
     j_title = st.text_input("หัวข้อ", "บันทึกประจำวัน")
-    j_notes = st.text_area("รายละเอียด / แผนการเทรด")
-    if st.form_submit_button("💾 บันทึกสมุดบันทึก"):
+    j_notes = st.text_area("รายละเอียด")
+    if st.form_submit_button("💾 บันทึก"):
         save_journal_entry(active_portfolio, j_title, spot_price, volatility_input, total_pnl_sum, j_notes)
         st.success("บันทึกสำเร็จ!")
         st.rerun()
@@ -732,10 +644,10 @@ if not journal_df.empty:
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 1: Net Expiry Payoff (ตัดเส้นย่อยออก เหลือเฉพาะ Net Pay)
+# กราฟที่ 1: Net Expiry Payoff
 # ==========================================
-st.subheader(f"📈 1. Payoff รวมวันหมดอายุ ({selected_market})")
-payoff_mode = st.selectbox("หน่วยแสดงผล", ["บาทรวม (THB)", "จุด (Points)"])
+st.subheader(f"📈 1. Payoff วันหมดอายุ ({selected_market})")
+payoff_mode = st.selectbox("หน่วย", ["บาทรวม (THB)", "จุด (Points)"])
 
 price_range = np.linspace(spot_price * 0.85, spot_price * 1.15, 300)
 total_payoff = np.zeros_like(price_range)
@@ -770,27 +682,19 @@ if not market_trades.empty:
         closed_qty = matching_closes["Contracts"].sum() if not matching_closes.empty else 0
         rem_qty = max(0, open_qty - closed_qty)
         
-        # 1. ส่วนที่เหลือ Open อยู่
         if rem_qty > 0:
             mult_qty = (rem_qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else rem_qty)
             comm_rem = (comm_unit_open * rem_qty) if payoff_mode == "บาทรวม (THB)" else ((comm_unit_open * rem_qty) / contract_multiplier)
             payoff_rem = np.zeros_like(price_range)
             
-            if p_type == "Long Futures":
-                payoff_rem = (price_range - stk) * mult_qty - comm_rem
-            elif p_type == "Short Futures":
-                payoff_rem = (stk - price_range) * mult_qty - comm_rem
-            elif p_type == "Long Call Option":
-                payoff_rem = (np.maximum(0, price_range - stk) - prem) * mult_qty - comm_rem
-            elif p_type == "Short Call Option":
-                payoff_rem = (prem - np.maximum(0, price_range - stk)) * mult_qty - comm_rem
-            elif p_type == "Long Put Option":
-                payoff_rem = (np.maximum(0, stk - price_range) - prem) * mult_qty - comm_rem
-            elif p_type == "Short Put Option":
-                payoff_rem = (prem - np.maximum(0, stk - price_range)) * mult_qty - comm_rem
+            if p_type == "Long Futures": payoff_rem = (price_range - stk) * mult_qty - comm_rem
+            elif p_type == "Short Futures": payoff_rem = (stk - price_range) * mult_qty - comm_rem
+            elif p_type == "Long Call Option": payoff_rem = (np.maximum(0, price_range - stk) - prem) * mult_qty - comm_rem
+            elif p_type == "Short Call Option": payoff_rem = (prem - np.maximum(0, price_range - stk)) * mult_qty - comm_rem
+            elif p_type == "Long Put Option": payoff_rem = (np.maximum(0, stk - price_range) - prem) * mult_qty - comm_rem
+            elif p_type == "Short Put Option": payoff_rem = (prem - np.maximum(0, stk - price_range)) * mult_qty - comm_rem
                 
             total_payoff += payoff_rem
-            
             opt_flag = "Call" if "Call" in p_type else ("Put" if "Put" in p_type else None)
             if opt_flag:
                 g = bs_greeks(spot_price, stk, T, risk_free_rate, volatility_input, opt_flag)
@@ -802,7 +706,6 @@ if not market_trades.empty:
             else:
                 total_greeks["Delta"] += 1.0 * rem_qty * contract_multiplier * (1 if "Long" in p_type else -1)
             
-        # 2. ส่วนที่ปิดไปแล้ว
         if not matching_closes.empty:
             for _, c_row in matching_closes.iterrows():
                 c_qty = int(c_row["Contracts"])
@@ -815,122 +718,57 @@ if not market_trades.empty:
                 mult_c = (c_qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else c_qty)
                 
                 if "Futures" in p_type:
-                    if "Long" in p_type:
-                        locked_val = ((c_strike_close - stk) * mult_c) - c_comm_scaled
-                    else:  # Short Futures
-                        locked_val = ((stk - c_strike_close) * mult_c) - c_comm_scaled
-                else:  # Options
-                    if "Long" in p_type:
-                        locked_val = ((c_prem - prem) * mult_c) - c_comm_scaled
-                    else:
-                        locked_val = ((prem - c_prem) * mult_c) - c_comm_scaled
+                    locked_val = ((c_strike_close - stk) * mult_c) - c_comm_scaled if "Long" in p_type else ((stk - c_strike_close) * mult_c) - c_comm_scaled
+                else:
+                    locked_val = ((c_prem - prem) * mult_c) - c_comm_scaled if "Long" in p_type else ((prem - c_prem) * mult_c) - c_comm_scaled
                     
-                payoff_closed = np.full_like(price_range, locked_val)
-                total_payoff += payoff_closed
+                total_payoff += np.full_like(price_range, locked_val)
 
-# Break-even
 be_points = []
 for j in range(len(price_range) - 1):
     if total_payoff[j] * total_payoff[j+1] < 0:
         x1, x2 = price_range[j], price_range[j+1]
         y1, y2 = total_payoff[j], total_payoff[j+1]
-        if y2 - y1 != 0:
-            be_points.append(x1 - y1 * (x2 - x1) / (y2 - y1))
+        if y2 - y1 != 0: be_points.append(x1 - y1 * (x2 - x1) / (y2 - y1))
 
 max_pnl_val, price_at_max = total_payoff[np.argmax(total_payoff)], price_range[np.argmax(total_payoff)]
 min_pnl_val, price_at_min = total_payoff[np.argmin(total_payoff)], price_range[np.argmin(total_payoff)]
 unit_label = "บาท" if payoff_mode == "บาทรวม (THB)" else "จุด"
 
-# --- สรุปสถิติความเสี่ยง ---
-st.markdown("#### 🎯 สรุปความเสี่ยง (Max / Min & Boundaries)")
+st.markdown("#### 🎯 สรุปความเสี่ยง")
 sc1, sc2, sc3, sc4 = st.columns(4)
+with sc1: st.markdown(f"**กำไรสูงสุด:** `{max_pnl_val:,.2f} {unit_label}` (ที่ {price_at_max:,.2f})")
+with sc2: st.markdown(f"**ขาดทุนสูงสุด:** `{min_pnl_val:,.2f} {unit_label}` (ที่ {price_at_min:,.2f})")
+with sc3: st.markdown(f"**ซ้ายสุด:** `{total_payoff[0]:,.2f} {unit_label}`")
+with sc4: st.markdown(f"**ขวาสุด:** `{total_payoff[-1]:,.2f} {unit_label}`")
 
-with sc1:
-    st.markdown(f"""
-    <div style="background-color: #f8f9fa; padding: 8px; border-radius: 6px; border: 1px solid #e9ecef;">
-        <div style="font-size: 11px; color: #6c757d;">🟢 กำไรสูงสุด</div>
-        <div style="font-size: 14px; font-weight: bold; color: #28a745;">{max_pnl_val:,.2f} {unit_label}</div>
-        <div style="font-size: 10px;">ที่ราคา: {price_at_max:,.2f}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with sc2:
-    st.markdown(f"""
-    <div style="background-color: #f8f9fa; padding: 8px; border-radius: 6px; border: 1px solid #e9ecef;">
-        <div style="font-size: 11px; color: #6c757d;">🔴 ขาดทุนสูงสุด</div>
-        <div style="font-size: 14px; font-weight: bold; color: #dc3545;">{min_pnl_val:,.2f} {unit_label}</div>
-        <div style="font-size: 10px;">ที่ราคา: {price_at_min:,.2f}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with sc3:
-    st.markdown(f"""
-    <div style="background-color: #f8f9fa; padding: 8px; border-radius: 6px; border: 1px solid #e9ecef;">
-        <div style="font-size: 11px; color: #6c757d;">📉 ฝั่งซ้ายสุด</div>
-        <div style="font-size: 14px; font-weight: bold; color: #343a40;">{total_payoff[0]:,.2f} {unit_label}</div>
-        <div style="font-size: 10px;">ที่ราคา: {price_range[0]:,.2f}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with sc4:
-    st.markdown(f"""
-    <div style="background-color: #f8f9fa; padding: 8px; border-radius: 6px; border: 1px solid #e9ecef;">
-        <div style="font-size: 11px; color: #6c757d;">📈 ฝั่งขวาสุด</div>
-        <div style="font-size: 14px; font-weight: bold; color: #343a40;">{total_payoff[-1]:,.2f} {unit_label}</div>
-        <div style="font-size: 10px;">ที่ราคา: {price_range[-1]:,.2f}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-be_str = ", ".join([f"`{bp:,.2f}`" for bp in be_points]) if be_points else "ไม่มีจุดคุ้มทุนในช่วงนี้"
-st.markdown(f"<br>💡 **จุดคุ้มทุน (Break-even):** {be_str}", unsafe_allow_html=True)
-
+be_str = ", ".join([f"`{bp:,.2f}`" for bp in be_points]) if be_points else "ไม่มีจุดคุ้มทุน"
+st.markdown(f"💡 **จุดคุ้มทุน (BE):** {be_str}")
 st.markdown("<br>", unsafe_allow_html=True)
 
-fig.add_trace(go.Scatter(
-    x=price_range, y=total_payoff, mode='lines', name='Net Portfolio Payoff',
-    line=dict(color='blue', width=3), fill='tozeroy', fillcolor='rgba(0, 123, 255, 0.1)'
-))
-
-fig.add_trace(go.Scatter(
-    x=price_range, y=np.where(total_payoff < 0, total_payoff, 0), mode='lines',
-    line=dict(width=0), fill='tozeroy', fillcolor='rgba(220, 53, 69, 0.15)', showlegend=False, hoverinfo='skip'
-))
-
+fig.add_trace(go.Scatter(x=price_range, y=total_payoff, mode='lines', name='Net Payoff', line=dict(color='blue', width=3), fill='tozeroy', fillcolor='rgba(0, 123, 255, 0.1)'))
 if be_points:
-    fig.add_trace(go.Scatter(
-        x=be_points, y=[0]*len(be_points), mode='markers+text', name='Break-even',
-        marker=dict(color='orange', size=10, symbol='diamond'),
-        text=[f"BE: {bp:.2f}" for bp in be_points], textposition="bottom center"
-    ))
+    fig.add_trace(go.Scatter(x=be_points, y=[0]*len(be_points), mode='markers+text', name='Break-even', marker=dict(color='orange', size=10, symbol='diamond'), text=[f"BE: {bp:.2f}" for bp in be_points], textposition="bottom center"))
 
-fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
+fig.add_hline(y=0, line_color="black", line_width=1)
 fig.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
-
 spot_pnl_expiry = np.interp(spot_price, price_range, total_payoff)
-pnl_status = f"+{spot_pnl_expiry:,.2f}" if spot_pnl_expiry >= 0 else f"{spot_pnl_expiry:,.2f}"
-
-fig.add_annotation(
-    x=spot_price, y=1.03, yref="paper", text=f"Spot: {spot_price:,.2f} ({pnl_status})",
-    showarrow=False, font=dict(color="red", size=13), xanchor="center", yanchor="bottom"
-)
+fig.add_annotation(x=spot_price, y=1.03, yref="paper", text=f"Spot: {spot_price:,.2f} ({spot_pnl_expiry:+,.2f})", showarrow=False, font=dict(color="red", size=13))
 
 fig.update_layout(
     title=dict(text=f"Net Expiry Payoff ({payoff_mode})", y=0.98, x=0.0, xanchor='left', yanchor='top'),
     xaxis_title="Underlying Price", yaxis_title=f"P&L ({payoff_mode})",
-    hovermode="x unified", template="plotly_white", height=560,
-    margin=dict(t=80, b=50, l=50, r=50),
-    legend=dict(orientation="h", yanchor="bottom", y=1.12, xanchor="right", x=1)
+    hovermode="x unified", template="plotly_white", height=500, margin=dict(t=60, b=40, l=40, r=40),
+    legend=dict(orientation="h", yanchor="bottom", y=1.08, xanchor="right", x=1)
 )
-
 st.plotly_chart(fig, use_container_width=True)
-
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 2 & 3: Time Decay Simulation & Greeks
+# กราฟที่ 2 & 3: Time Decay & Greeks
 # ==========================================
 st.subheader("⏱ 2. จำลอง Payoff รายวัน")
-sim_date = st.date_input("เลือกวันที่จำลอง", value=date.today())
+sim_date = st.date_input("วันที่จำลอง", value=date.today())
 sim_date_str = str(sim_date)
 
 fig_daily_single = go.Figure()
@@ -962,10 +800,8 @@ if not market_trades.empty:
                     
                 if status == "Open":
                     mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
-                    if p_type == "Long Futures":
-                        val = (price_range - stk) * mult_qty - comm_val
-                    elif p_type == "Short Futures":
-                        val = (stk - price_range) * mult_qty - comm_val
+                    if p_type == "Long Futures": val = (price_range - stk) * mult_qty - comm_val
+                    elif p_type == "Short Futures": val = (stk - price_range) * mult_qty - comm_val
                     elif "Call" in p_type:
                         opt_v = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Call") for p in price_range])
                         val = (opt_v - prem) * mult_qty - comm_val if "Long" in p_type else (prem - opt_v) * mult_qty - comm_val
@@ -978,31 +814,19 @@ if not market_trades.empty:
                     open_id_ref = int(row["RefID"])
                     matching_open = market_trades[market_trades["ID"] == open_id_ref]
                     entry_price = float(matching_open["Strike"].values[0]) if not matching_open.empty and "Futures" in p_type else float(matching_open["Premium"].values[0]) if not matching_open.empty else prem
-                    
                     mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
                     if "Futures" in p_type:
-                        if "Long" in p_type:
-                            val = np.full_like(price_range, ((prem - entry_price) * mult_qty) - comm_val)
-                        else:
-                            val = np.full_like(price_range, ((entry_price - prem) * mult_qty) - comm_val)
+                        val = np.full_like(price_range, ((prem - entry_price) * mult_qty) - comm_val) if "Long" in p_type else np.full_like(price_range, ((entry_price - prem) * mult_qty) - comm_val)
                     else:
-                        if "Long" in p_type:
-                            val = np.full_like(price_range, ((prem - entry_price) * mult_qty) - comm_val)
-                        else:
-                            val = np.full_like(price_range, ((entry_price - prem) * mult_qty) - comm_val)
-
+                        val = np.full_like(price_range, ((prem - entry_price) * mult_qty) - comm_val) if "Long" in p_type else np.full_like(price_range, ((entry_price - prem) * mult_qty) - comm_val)
                 day_val += val
                 
         if has_t:
             is_sel = (t_str == sim_date_str)
-            fig_daily_single.add_trace(go.Scatter(
-                x=price_range, y=day_val, mode='lines', name=f"Date {t_str}" + (" (Selected)" if is_sel else ""),
-                line=dict(color=colors[i % len(colors)], width=3 if is_sel else 1.5, dash='solid' if is_sel else 'dash')
-            ))
+            fig_daily_single.add_trace(go.Scatter(x=price_range, y=day_val, mode='lines', name=t_str, line=dict(color=colors[i % len(colors)], width=3 if is_sel else 1.5, dash='solid' if is_sel else 'dash')))
 
     for i, t_str in enumerate(unique_dates):
-        if t_str > sim_date_str:
-            continue
+        if t_str > sim_date_str: continue
         t_d = datetime.strptime(t_str, "%Y-%m-%d").date() if t_str else date.today()
         cum_val = np.zeros_like(price_range)
         cum_trades = market_trades[market_trades["TradeDate"].astype(str) <= t_str]
@@ -1019,10 +843,8 @@ if not market_trades.empty:
                     
                 if status == "Open":
                     mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
-                    if p_type == "Long Futures":
-                        val = (price_range - stk) * mult_qty - comm_val
-                    elif p_type == "Short Futures":
-                        val = (stk - price_range) * mult_qty - comm_val
+                    if p_type == "Long Futures": val = (price_range - stk) * mult_qty - comm_val
+                    elif p_type == "Short Futures": val = (stk - price_range) * mult_qty - comm_val
                     elif "Call" in p_type:
                         opt_v = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Call") for p in price_range])
                         val = (opt_v - prem) * mult_qty - comm_val if "Long" in p_type else (prem - opt_v) * mult_qty - comm_val
@@ -1035,40 +857,29 @@ if not market_trades.empty:
                     open_id_ref = int(row["RefID"])
                     matching_open = market_trades[market_trades["ID"] == open_id_ref]
                     entry_price = float(matching_open["Strike"].values[0]) if not matching_open.empty and "Futures" in p_type else float(matching_open["Premium"].values[0]) if not matching_open.empty else prem
-                    
                     mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
                     if "Futures" in p_type:
-                        if "Long" in p_type:
-                            val = np.full_like(price_range, ((prem - entry_price) * mult_qty) - comm_val)
-                        else:
-                            val = np.full_like(price_range, ((entry_price - prem) * mult_qty) - comm_val)
+                        val = np.full_like(price_range, ((prem - entry_price) * mult_qty) - comm_val) if "Long" in p_type else np.full_like(price_range, ((entry_price - prem) * mult_qty) - comm_val)
                     else:
-                        if "Long" in p_type:
-                            val = np.full_like(price_range, ((prem - entry_price) * mult_qty) - comm_val)
-                        else:
-                            val = np.full_like(price_range, ((entry_price - prem) * mult_qty) - comm_val)
-
+                        val = np.full_like(price_range, ((prem - entry_price) * mult_qty) - comm_val) if "Long" in p_type else np.full_like(price_range, ((entry_price - prem) * mult_qty) - comm_val)
                 cum_val += val
                 
         is_sel = (t_str == sim_date_str)
-        fig_daily_cumulative.add_trace(go.Scatter(
-            x=price_range, y=cum_val, mode='lines', name=f"Cum. to {t_str}" + (" (Selected)" if is_sel else ""),
-            line=dict(color=colors[i % len(colors)], width=3.5 if is_sel else 1.5, dash='solid' if is_sel else 'dash')
-        ))
+        fig_daily_cumulative.add_trace(go.Scatter(x=price_range, y=cum_val, mode='lines', name=t_str, line=dict(color=colors[i % len(colors)], width=3.5 if is_sel else 1.5, dash='solid' if is_sel else 'dash')))
 
 fig_daily_single.add_hline(y=0, line_color="black", line_width=1)
 fig_daily_single.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
-fig_daily_single.update_layout(title="Payoff เฉพาะวันที่เทรด", template="plotly_white", height=400, legend=dict(orientation="h", y=1.1))
+fig_daily_single.update_layout(title="Payoff เฉพาะวันที่เทรด", template="plotly_white", height=380, margin=dict(t=40, b=30, l=30, r=30), legend=dict(orientation="h", y=1.1))
 
 fig_daily_cumulative.add_hline(y=0, line_color="black", line_width=1)
 fig_daily_cumulative.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
-fig_daily_cumulative.update_layout(title="Payoff สะสมถึงวันที่เลือก", template="plotly_white", height=400, legend=dict(orientation="h", y=1.1))
+fig_daily_cumulative.update_layout(title="Payoff สะสมถึงวันที่เลือก", template="plotly_white", height=380, margin=dict(t=40, b=30, l=30, r=30), legend=dict(orientation="h", y=1.1))
 
 st.plotly_chart(fig_daily_single, use_container_width=True)
 st.plotly_chart(fig_daily_cumulative, use_container_width=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
-st.markdown(f"### 📋 รายการเทรด ณ หรือก่อนวันที่ `{sim_date_str}`")
+st.markdown(f"### 📋 รายการเทรด (ณ วันที่ `{sim_date_str}`)")
 if not market_trades.empty:
     filt_sim = market_trades[market_trades["TradeDate"].astype(str) <= sim_date_str]
     if not filt_sim.empty:
@@ -1081,7 +892,7 @@ st.markdown("<br><br>", unsafe_allow_html=True)
 # ==========================================
 # สรุป Greeks
 # ==========================================
-st.subheader("📐 สรุป Greeks รวมพอร์ต")
+st.subheader("📐 สรุป Greeks พอร์ต")
 g1, g2, g3, g4 = st.columns(4)
 g1.metric("Delta", f"{total_greeks['Delta']:,.2f}")
 g2.metric("Gamma", f"{total_greeks['Gamma']:,.4f}")

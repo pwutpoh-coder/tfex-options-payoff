@@ -528,7 +528,7 @@ else:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (แก้ไขการคำนวณ Futures และปล่อยช่อง Close ว่างหากไม่มีการปิด) ---
+# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (หักค่าคอมมิชชันทั้งขาเปิดและขาปิดอย่างถูกต้อง) ---
 st.subheader("📊 ตารางสรุปสถานะและ P&L ปัจจุบัน")
 total_pnl_sum = 0.0
 if not market_trades.empty:
@@ -545,7 +545,7 @@ if not market_trades.empty:
         open_id = int(open_row["ID"])
         ser, stk, p_type = open_row["Series"], float(open_row["Strike"]), open_row["Type"]
         open_qty, open_prem = int(open_row["Contracts"]), float(open_row["Premium"])
-        comm_unit = float(open_row["Commission"])
+        comm_unit_open = float(open_row["Commission"])
         
         # ค้นหาคำสั่ง Close ที่จับคู่ผ่าน RefID หรือจับคู่อัตโนมัติกรณี RefID เป็น 0
         matching_closes = close_trades_df[
@@ -573,7 +573,7 @@ if not market_trades.empty:
         rem_pnl = 0.0
         if rem_qty > 0:
             mult_qty = rem_qty * contract_multiplier
-            comm_rem = comm_unit * rem_qty
+            comm_rem = comm_unit_open * rem_qty
             if p_type == "Long Futures":
                 rem_pnl = (spot_price - stk) * mult_qty - comm_rem
             elif p_type == "Short Futures":
@@ -602,7 +602,10 @@ if not market_trades.empty:
                 c_qty = int(c_row["Contracts"])
                 c_prem = float(c_row["Premium"])
                 c_strike_close = float(c_row["Strike"])
-                c_comm = comm_unit * c_qty
+                comm_unit_close = float(c_row["Commission"])
+                
+                # หักค่าคอมฯ ทั้งขาเปิด (เฉพาะส่วนที่ปิด) และขาปิด
+                c_comm = (comm_unit_open * c_qty) + (comm_unit_close * c_qty)
                 mult_c = c_qty * contract_multiplier
                 
                 if "Futures" in p_type:
@@ -714,7 +717,7 @@ if not market_trades.empty:
         open_id = int(open_row["ID"])
         p_type, stk, prem = open_row["Type"], float(open_row["Strike"]), float(open_row["Premium"])
         open_qty = int(open_row["Contracts"])
-        comm_unit = float(open_row["Commission"])
+        comm_unit_open = float(open_row["Commission"])
         
         try:
             T = max((datetime.strptime(str(open_row["ExpiryDate"]), "%Y-%m-%d").date() - today).days, 0) / 365.0
@@ -735,7 +738,7 @@ if not market_trades.empty:
         # 1. ส่วนที่เหลือ Open อยู่
         if rem_qty > 0:
             mult_qty = (rem_qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else rem_qty)
-            comm_rem = (comm_unit * rem_qty) if payoff_mode == "บาทรวม (THB)" else ((comm_unit * rem_qty) / contract_multiplier)
+            comm_rem = (comm_unit_open * rem_qty) if payoff_mode == "บาทรวม (THB)" else ((comm_unit_open * rem_qty) / contract_multiplier)
             payoff_rem = np.zeros_like(price_range)
             
             if p_type == "Long Futures":
@@ -770,19 +773,22 @@ if not market_trades.empty:
                 c_qty = int(c_row["Contracts"])
                 c_prem = float(c_row["Premium"])
                 c_strike_close = float(c_row["Strike"])
-                c_comm = (comm_unit * c_qty) if payoff_mode == "บาทรวม (THB)" else ((comm_unit * c_qty) / contract_multiplier)
+                comm_unit_close = float(c_row["Commission"])
+                
+                c_comm = (comm_unit_open * c_qty) + (comm_unit_close * c_qty)
+                c_comm_scaled = c_comm if payoff_mode == "บาทรวม (THB)" else (c_comm / contract_multiplier)
                 mult_c = (c_qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else c_qty)
                 
                 if "Futures" in p_type:
                     if "Long" in p_type:
-                        locked_val = ((c_strike_close - stk) * mult_c) - c_comm
+                        locked_val = ((c_strike_close - stk) * mult_c) - c_comm_scaled
                     else:  # Short Futures
-                        locked_val = ((stk - c_strike_close) * mult_c) - c_comm
+                        locked_val = ((stk - c_strike_close) * mult_c) - c_comm_scaled
                 else:  # Options
                     if "Long" in p_type:
-                        locked_val = ((c_prem - prem) * mult_c) - c_comm
+                        locked_val = ((c_prem - prem) * mult_c) - c_comm_scaled
                     else:
-                        locked_val = ((prem - c_prem) * mult_c) - c_comm
+                        locked_val = ((prem - c_prem) * mult_c) - c_comm_scaled
                     
                 payoff_closed = np.full_like(price_range, locked_val)
                 total_payoff += payoff_closed

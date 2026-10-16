@@ -18,7 +18,7 @@ st.set_page_config(
 # กำหนดโซนเวลา Bangkok (UTC+7)
 BANGKOK_TZ = timezone(timedelta(hours=7))
 
-# --- CSS พิเศษช่วยปรับแต่งการแสดงผลบนมือถือ, สัญลักษณ์สี, และตารางแบบเลื่อนบาร์แนวนอนบรรทัดเดียว ---
+# --- CSS พิเศษช่วยปรับแต่งการแสดงผลบนมือถือ, สัญลักษณ์สี, ตาราง, และการ์ดสรุปผล Payoff แบบกะทัดรัดสวยงาม ---
 st.markdown("""
     <style>
     .stMetric {
@@ -56,6 +56,35 @@ st.markdown("""
     .scrollable-table-container th {
         background-color: #f8f9fa;
         font-weight: bold;
+    }
+
+    /* CSS สำหรับการ์ดสรุปผล Payoff ให้กะทัดรัด ทันสมัย และไม่เทอะทะ */
+    .payoff-summary-card {
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    }
+    .payoff-summary-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 14px;
+        padding: 4px 0;
+        border-bottom: 1px solid #f1f3f5;
+    }
+    .payoff-summary-row:last-child {
+        border-bottom: none;
+    }
+    .payoff-label {
+        font-weight: 600;
+        color: #495057;
+    }
+    .payoff-value {
+        font-weight: 500;
+        color: #212529;
     }
 
     @media (max-width: 768px) {
@@ -648,7 +677,7 @@ if not journal_df.empty:
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 1: Net Expiry Payoff
+# กราฟที่ 1: Net Expiry Payoff (ปรับผลสรุป Payoff ให้อ่านง่าย กะทัดรัด สวยงาม)
 # ==========================================
 st.subheader(f"📈 1. Payoff วันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วย", ["บาทรวม (THB)", "จุด (Points)"])
@@ -739,23 +768,34 @@ max_pnl_val, price_at_max = total_payoff[np.argmax(total_payoff)], price_range[n
 min_pnl_val, price_at_min = total_payoff[np.argmin(total_payoff)], price_range[np.argmin(total_payoff)]
 unit_label = "บาท" if payoff_mode == "บาทรวม (THB)" else "จุด"
 
-# --- ส่วนแสดงผลสรุป Payoff ที่ปรับรูปแบบใหม่ให้สวยงาม ชัดเจน และไม่เทอะทะ ---
-st.markdown("##### 📌 ผลสรุป Payoff")
-metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
-with metric_col1:
-    st.metric(label="กำไรสูงสุด", value=f"{max_pnl_val:,.2f} {unit_label}", delta=f"@{price_at_max:,.2f}")
-with metric_col2:
-    st.metric(label="ขาดทุนสูงสุด", value=f"{min_pnl_val:,.2f} {unit_label}", delta=f"@{price_at_min:,.2f}", delta_color="inverse")
-with metric_col3:
-    st.metric(label="ซ้ายสุด (ขอบล่าง)", value=f"{total_payoff[0]:,.2f} {unit_label}")
-with metric_col4:
-    st.metric(label="ขวาสุด (ขอบบน)", value=f"{total_payoff[-1]:,.2f} {unit_label}")
+be_str = ", ".join([f"`{bp:,.2f}`" for bp in be_points]) if be_points else "ไม่มี"
 
-be_str = " | ".join([f"`{bp:,.2f}`" for bp in be_points]) if be_points else "ไม่มีจุดคุ้มทุน"
-st.info(f"💡 **จุดคุ้มทุน (BE):** {be_str}")
+# --- ผลสรุป Payoff (รูปแบบการ์ดกะทัดรัด สวยงาม สบายตา) ---
+st.markdown("#### 🎯 ผลสรุป Payoff")
+st.markdown(f"""
+<div class="payoff-summary-card">
+    <div class="payoff-summary-row">
+        <span class="payoff-label">🟢 กำไรสูงสุด</span>
+        <span class="payoff-value" style="color: #2b8a3e;">{max_pnl_val:,.2f} {unit_label} <span style="color:#868e96; font-size:12px;">(ที่ {price_at_max:,.2f})</span></span>
+    </div>
+    <div class="payoff-summary-row">
+        <span class="payoff-label">🔴 ขาดทุนสูงสุด</span>
+        <span class="payoff-value" style="color: #c92a2a;">{min_pnl_val:,.2f} {unit_label} <span style="color:#868e96; font-size:12px;">(ที่ {price_at_min:,.2f})</span></span>
+    </div>
+    <div class="payoff-summary-row">
+        <span class="payoff-label">📊 ขอบเขตซ้าย / ขวา</span>
+        <span class="payoff-value">{total_payoff[0]:,.2f} / {total_payoff[-1]:,.2f} {unit_label}</span>
+    </div>
+    <div class="payoff-summary-row">
+        <span class="payoff-label">💡 จุดคุ้มทุน (BE)</span>
+        <span class="payoff-value">{be_str}</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- วาดกราฟ Net Expiry Payoff พร้อมแยกสีพื้นที่กำไร (ฟ้า) และขาดทุน (แดงอ่อน) ---
+# วาดกราฟ Net Expiry Payoff พร้อมแยกสีพื้นที่กำไร (ฟ้า) และขาดทุน (แดงอ่อน)
 fig.add_trace(go.Scatter(
     x=price_range, 
     y=np.where(total_payoff >= 0, total_payoff, 0), 

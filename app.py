@@ -344,26 +344,27 @@ prefix_code = "USD" if selected_market == "TFEX USD/THB" else "S50"
 month_codes = ["H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]
 generated_series_options = [f"{prefix_code}{m}{yr}" for yr in [short_year, next_short_year] for m in month_codes]
 
-# --- ฟอร์มเพิ่มสัญญา ---
+# --- ฟอร์มเพิ่มสัญญา (วางตัวเลือกสถานะและ RefID ไว้ข้างนอกฟอร์มเพื่อให้ทำงานแบบไดนามิกได้ทันที) ---
 st.sidebar.subheader("➕ เพิ่มสัญญา")
+
+position_status = st.sidebar.selectbox("สถานะ", options=["Open", "Close"], index=0)
+
+ref_id_input = 0
+if position_status == "Close":
+    open_list = trades_df[trades_df["Status"] == "Open"]
+    if not open_list.empty:
+        open_ids = open_list["ID"].tolist()
+        ref_id_input = st.sidebar.selectbox("จับคู่ปิดกับ Open ID บรรทัดที่", options=open_ids)
+    else:
+        st.sidebar.warning("ยังไม่มี Open ในพอร์ตสำหรับจับคู่ปิด")
+
 if "form_key" not in st.session_state: st.session_state["form_key"] = 0
 
 with st.sidebar.form(key=f"trade_form_{st.session_state['form_key']}"):
     strategy_name = st.text_input("กลยุทธ์", value="")
     series_name = st.selectbox("ซีรีส์", options=generated_series_options, index=0)
-    position_status = st.selectbox("สถานะ", options=["Open", "Close"], index=0)
     position_type = st.selectbox("ประเภท", options=["Long Futures", "Short Futures", "Long Call Option", "Short Call Option", "Long Put Option", "Short Put Option"], index=0)
     
-    # เพิ่มส่วนเลือกจับคู่ปิดกับบรรทัด Open ID
-    ref_id_input = 0
-    if position_status == "Close":
-        open_list = trades_df[trades_df["Status"] == "Open"]
-        if not open_list.empty:
-            open_ids = open_list["ID"].tolist()
-            ref_id_input = st.selectbox("จับคู่ปิดกับ Open ID บรรทัดที่", options=open_ids)
-        else:
-            st.warning("ยังไม่มีสถานะ Open ในพอร์ตสำหรับจับคู่ปิด")
-            
     strike_input_str = st.text_input("Strike Price", value="")
     premium = st.number_input("พรีเมี่ยม / ราคาปิด", value=0.0, format="%.2f")
     contracts = st.number_input("สัญญา", value=1, min_value=1, step=1)

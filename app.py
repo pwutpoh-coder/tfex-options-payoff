@@ -18,7 +18,7 @@ st.set_page_config(
 # กำหนดโซนเวลา Bangkok (UTC+7)
 BANGKOK_TZ = timezone(timedelta(hours=7))
 
-# --- CSS พิเศษช่วยปรับแต่งการแสดงผลบนมือถือ, สัญลักษณ์สี, ตาราง, และการ์ดสรุปผล Payoff แบบกะทัดรัดสวยงาม ---
+# --- CSS พิเศษช่วยปรับแต่งการแสดงผลบนมือถือ, สัญลักษณ์สี, ตาราง, และไอคอนการ์ดสรุปผล Payoff ---
 st.markdown("""
     <style>
     .stMetric {
@@ -58,33 +58,47 @@ st.markdown("""
         font-weight: bold;
     }
 
-    /* CSS สำหรับการ์ดสรุปผล Payoff ให้กะทัดรัด ทันสมัย และไม่เทอะทะ */
-    .payoff-summary-card {
-        background: #f8f9fa;
-        border: 1px solid #e9ecef;
+    /* CSS การ์ดไอคอนขนาดเล็กเรียงแนวนอนสำหรับผลสรุป Payoff */
+    .payoff-icon-card {
+        background-color: #ffffff;
+        border: 1px solid #e0e0e0;
         border-radius: 8px;
-        padding: 12px 16px;
-        margin-bottom: 12px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.02);
-    }
-    .payoff-summary-row {
+        padding: 10px 14px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        font-size: 14px;
-        padding: 4px 0;
-        border-bottom: 1px solid #f1f3f5;
+        gap: 12px;
+        height: 100%;
     }
-    .payoff-summary-row:last-child {
-        border-bottom: none;
+    .payoff-icon-box {
+        font-size: 22px;
+        background: #f1f3f5;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
     }
-    .payoff-label {
+    .payoff-card-content {
+        display: flex;
+        flex-direction: column;
+    }
+    .payoff-card-title {
+        font-size: 12px;
+        color: #6c757d;
         font-weight: 600;
-        color: #495057;
+        margin-bottom: 2px;
     }
-    .payoff-value {
-        font-weight: 500;
+    .payoff-card-val {
+        font-size: 15px;
+        font-weight: 700;
         color: #212529;
+    }
+    .payoff-card-sub {
+        font-size: 11px;
+        color: #868e96;
     }
 
     @media (max-width: 768px) {
@@ -261,7 +275,7 @@ def get_market_data(market_type):
         update_time = datetime.now(BANGKOK_TZ).strftime("%Y-%m-%d %H:%M:%S")
         return default_p, default_v, update_time
 
-# --- Black-Scholes ---
+# --- Black-Scholes Formula ---
 def bs_option_price(S, K, T, r, sigma, option_type):
     if T <= 0:
         return np.maximum(0, S - K) if option_type == "Call" else np.maximum(0, K - S)
@@ -534,7 +548,7 @@ else:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- ตารางสรุปสถานะและ P&L ปัจจุบัน (บรรทัดเดียว เลื่อนบาร์ได้) ---
+# --- ตารางสรุปสถานะและ P&L ปัจจุบัน ---
 st.subheader("📊 สถานะและ P&L ปัจจุบัน")
 total_pnl_sum = 0.0
 if not market_trades.empty:
@@ -677,7 +691,7 @@ if not journal_df.empty:
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 1: Net Expiry Payoff (ปรับผลสรุป Payoff ให้อ่านง่าย กะทัดรัด สวยงาม)
+# กราฟที่ 1: Net Expiry Payoff (ปรับผลสรุปเป็นกลุ่มไอคอนเล็ก แนวนอน)
 # ==========================================
 st.subheader(f"📈 1. Payoff วันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วย", ["บาทรวม (THB)", "จุด (Points)"])
@@ -767,35 +781,63 @@ for j in range(len(price_range) - 1):
 max_pnl_val, price_at_max = total_payoff[np.argmax(total_payoff)], price_range[np.argmax(total_payoff)]
 min_pnl_val, price_at_min = total_payoff[np.argmin(total_payoff)], price_range[np.argmin(total_payoff)]
 unit_label = "บาท" if payoff_mode == "บาทรวม (THB)" else "จุด"
+be_str = ", ".join([f"{bp:,.2f}" for bp in be_points]) if be_points else "ไม่มี"
 
-be_str = ", ".join([f"`{bp:,.2f}`" for bp in be_points]) if be_points else "ไม่มี"
-
-# --- ผลสรุป Payoff (รูปแบบการ์ดกะทัดรัด สวยงาม สบายตา) ---
+# --- แก้ไขตามคำขอ: ผลสรุป Payoff แยกเป็นกลุ่มไอคอนเล็กๆ ในแถวแนวนอนเดียวกัน ---
 st.markdown("#### 🎯 ผลสรุป Payoff")
-st.markdown(f"""
-<div class="payoff-summary-card">
-    <div class="payoff-summary-row">
-        <span class="payoff-label">🟢 กำไรสูงสุด</span>
-        <span class="payoff-value" style="color: #2b8a3e;">{max_pnl_val:,.2f} {unit_label} <span style="color:#868e96; font-size:12px;">(ที่ {price_at_max:,.2f})</span></span>
+col_card1, col_card2, col_card3, col_card4 = st.columns(4)
+
+with col_card1:
+    st.markdown(f"""
+    <div class="payoff-icon-card">
+        <div class="payoff-icon-box" style="background:#e6fcf5; color:#0ca678;">🟢</div>
+        <div class="payoff-card-content">
+            <span class="payoff-card-title">กำไรสูงสุด</span>
+            <span class="payoff-card-val" style="color:#2b8a3e;">{max_pnl_val:,.2f} <span style="font-size:12px; font-weight:normal;">{unit_label}</span></span>
+            <span class="payoff-card-sub">ที่ราคา {price_at_max:,.2f}</span>
+        </div>
     </div>
-    <div class="payoff-summary-row">
-        <span class="payoff-label">🔴 ขาดทุนสูงสุด</span>
-        <span class="payoff-value" style="color: #c92a2a;">{min_pnl_val:,.2f} {unit_label} <span style="color:#868e96; font-size:12px;">(ที่ {price_at_min:,.2f})</span></span>
+    """, unsafe_allow_html=True)
+
+with col_card2:
+    st.markdown(f"""
+    <div class="payoff-icon-card">
+        <div class="payoff-icon-box" style="background:#fff5f5; color:#f03e3e;">🔴</div>
+        <div class="payoff-card-content">
+            <span class="payoff-card-title">ขาดทุนสูงสุด</span>
+            <span class="payoff-card-val" style="color:#c92a2a;">{min_pnl_val:,.2f} <span style="font-size:12px; font-weight:normal;">{unit_label}</span></span>
+            <span class="payoff-card-sub">ที่ราคา {price_at_min:,.2f}</span>
+        </div>
     </div>
-    <div class="payoff-summary-row">
-        <span class="payoff-label">📊 ขอบเขตซ้าย / ขวา</span>
-        <span class="payoff-value">{total_payoff[0]:,.2f} / {total_payoff[-1]:,.2f} {unit_label}</span>
+    """, unsafe_allow_html=True)
+
+with col_card3:
+    st.markdown(f"""
+    <div class="payoff-icon-card">
+        <div class="payoff-icon-box" style="background:#e7f5ff; color:#1c7ed6;">📊</div>
+        <div class="payoff-card-content">
+            <span class="payoff-card-title">ขอบเขต ซ้าย / ขวา</span>
+            <span class="payoff-card-val">{total_payoff[0]:,.0f} / {total_payoff[-1]:,.0f}</span>
+            <span class="payoff-card-sub">หน่วย {unit_label}</span>
+        </div>
     </div>
-    <div class="payoff-summary-row">
-        <span class="payoff-label">💡 จุดคุ้มทุน (BE)</span>
-        <span class="payoff-value">{be_str}</span>
+    """, unsafe_allow_html=True)
+
+with col_card4:
+    st.markdown(f"""
+    <div class="payoff-icon-card">
+        <div class="payoff-icon-box" style="background:#fff9db; color:#f59f00;">💡</div>
+        <div class="payoff-card-content">
+            <span class="payoff-card-title">จุดคุ้มทุน (BE)</span>
+            <span class="payoff-card-val" style="font-size:13px;">{be_str}</span>
+            <span class="payoff-card-sub">Break-Even Point</span>
+        </div>
     </div>
-</div>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# วาดกราฟ Net Expiry Payoff พร้อมแยกสีพื้นที่กำไร (ฟ้า) และขาดทุน (แดงอ่อน)
+# วาดกราฟ Net Expiry Payoff
 fig.add_trace(go.Scatter(
     x=price_range, 
     y=np.where(total_payoff >= 0, total_payoff, 0), 
@@ -803,7 +845,7 @@ fig.add_trace(go.Scatter(
     name='Profit Zone', 
     line=dict(width=0), 
     fill='tozeroy', 
-    fillcolor='rgba(0, 123, 255, 0.15)',
+    fillcolor='rgba(40, 167, 69, 0.12)',
     showlegend=False
 ))
 
@@ -814,7 +856,7 @@ fig.add_trace(go.Scatter(
     name='Loss Zone', 
     line=dict(width=0), 
     fill='tozeroy', 
-    fillcolor='rgba(255, 0, 0, 0.12)',
+    fillcolor='rgba(220, 53, 69, 0.10)',
     showlegend=False
 ))
 
@@ -822,149 +864,178 @@ fig.add_trace(go.Scatter(
     x=price_range, 
     y=total_payoff, 
     mode='lines', 
-    name='Net Payoff', 
-    line=dict(color='blue', width=3)
+    name='Net Expiry Payoff', 
+    line=dict(color='#2b6cb0', width=3)
 ))
 
 if be_points:
-    fig.add_trace(go.Scatter(x=be_points, y=[0]*len(be_points), mode='markers+text', name='Break-even', marker=dict(color='orange', size=10, symbol='diamond'), text=[f"BE: {bp:.2f}" for bp in be_points], textposition="bottom center"))
+    fig.add_trace(go.Scatter(x=be_points, y=[0]*len(be_points), mode='markers+text', name='Break-even', marker=dict(color='#d97706', size=9, symbol='diamond'), text=[f"BE: {bp:.2f}" for bp in be_points], textposition="bottom center"))
 
-fig.add_hline(y=0, line_color="black", line_width=1)
-fig.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
+fig.add_hline(y=0, line_color="#4a5568", line_width=1)
+fig.add_vline(x=spot_price, line_dash="dot", line_color="#e53e3e", line_width=1.5)
 spot_pnl_expiry = np.interp(spot_price, price_range, total_payoff)
-fig.add_annotation(x=spot_price, y=1.03, yref="paper", text=f"Spot: {spot_price:,.2f} ({spot_pnl_expiry:+,.2f})", showarrow=False, font=dict(color="red", size=13))
+fig.add_annotation(x=spot_price, y=1.03, yref="paper", text=f"Spot: {spot_price:,.2f} ({spot_pnl_expiry:+,.2f})", showarrow=False, font=dict(color="#e53e3e", size=12))
 
 fig.update_layout(
     title=dict(text=f"Net Expiry Payoff ({payoff_mode})", y=0.98, x=0.0, xanchor='left', yanchor='top'),
     xaxis_title="Underlying Price", yaxis_title=f"P&L ({payoff_mode})",
-    hovermode="x unified", template="plotly_white", height=500, margin=dict(t=60, b=40, l=40, r=40),
-    legend=dict(orientation="h", yanchor="bottom", y=1.08, xanchor="right", x=1)
+    hovermode="x unified", template="plotly_white", height=450, margin=dict(t=50, b=40, l=40, r=40),
+    legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
 )
 st.plotly_chart(fig, use_container_width=True)
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 2 & 3: Time Decay & Greeks
+# กราฟที่ 2: จำลอง Payoff รายวัน (เพิ่มเส้นปัจจุบัน, รวมกรีก Theta decay, รวม Volatility %)
 # ==========================================
-st.subheader("⏱ 2. จำลอง Payoff รายวัน")
-sim_date = st.date_input("วันที่จำลอง", value=date.today())
-sim_date_str = str(sim_date)
+st.subheader("⏱ 2. จำลอง Payoff รายวัน และปัจจัยความเสี่ยง")
 
-fig_daily_single = go.Figure()
-fig_daily_cumulative = go.Figure()
+col_sim_ctrl1, col_sim_ctrl2, col_sim_ctrl3 = st.columns([1.2, 1, 1])
+with col_sim_ctrl1:
+    days_pass_input = st.number_input("จำนวนวันที่ผ่านไป (Time Decay Test)", min_value=0, max_value=120, value=7, step=1)
+with col_sim_ctrl2:
+    vol_shift_input = st.slider("ปรับเปลี่ยน Volatility (%) (Vol Shift)", -30.0, 30.0, 5.0, step=0.5)
+with col_sim_ctrl3:
+    show_fill_areas = st.checkbox("เปิดแสดงสีพื้นที่ใต้เส้น (Filled Area)", value=True)
+
+# คำนวณเส้นสภาวะทั้ง 3 แบบ
+payoff_today = np.zeros_like(price_range)           # 1. เส้นปัจจุบัน (T+0)
+payoff_greeks_time = np.zeros_like(price_range)    # 2. เส้นที่รวมค่ากรีก (Time Decay)
+payoff_vol_shift = np.zeros_like(price_range)      # 3. เส้นที่รวม Volatility Change (%)
 
 if not market_trades.empty:
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
-    unique_dates = sorted(list(set(market_trades["TradeDate"].astype(str))))
-    if sim_date_str not in unique_dates:
-        unique_dates.append(sim_date_str)
-        unique_dates = sorted(unique_dates)
-
-    for i, t_str in enumerate(unique_dates):
-        t_d = datetime.strptime(t_str, "%Y-%m-%d").date() if t_str else date.today()
-        day_val = np.zeros_like(price_range)
-        has_t = False
+    open_trades_sim = market_trades[market_trades["Status"] == "Open"]
+    close_trades_sim = market_trades[market_trades["Status"] == "Close"]
+    
+    for _, open_row in open_trades_sim.iterrows():
+        open_id = int(open_row["ID"])
+        p_type, stk, prem = open_row["Type"], float(open_row["Strike"]), float(open_row["Premium"])
+        open_qty = int(open_row["Contracts"])
+        comm_unit_open = float(open_row["Commission"])
         
-        day_trades = market_trades[market_trades["TradeDate"].astype(str) == t_str]
-        if not day_trades.empty:
-            has_t = True
-            for _, row in day_trades.iterrows():
-                p_type, stk, prem, qty, status = row["Type"], float(row["Strike"]), float(row["Premium"]), int(row["Contracts"]), row["Status"]
-                comm_val = (float(row["Commission"]) * qty) if payoff_mode == "บาทรวม (THB)" else ((float(row["Commission"]) * qty) / contract_multiplier)
-                
-                try:
-                    T_sim = max((datetime.strptime(str(row["ExpiryDate"]), "%Y-%m-%d").date() - t_d).days, 0) / 365.0
-                except:
-                    T_sim = 30 / 365.0
-                    
-                if status == "Open":
-                    mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
-                    if p_type == "Long Futures": val = (price_range - stk) * mult_qty - comm_val
-                    elif p_type == "Short Futures": val = (stk - price_range) * mult_qty - comm_val
-                    elif "Call" in p_type:
-                        opt_v = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Call") for p in price_range])
-                        val = (opt_v - prem) * mult_qty - comm_val if "Long" in p_type else (prem - opt_v) * mult_qty - comm_val
-                    elif "Put" in p_type:
-                        opt_v = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Put") for p in price_range])
-                        val = (opt_v - prem) * mult_qty - comm_val if "Long" in p_type else (prem - opt_v) * mult_qty - comm_val
-                    else:
-                        val = -comm_val
-                else:
-                    open_id_ref = int(row["RefID"])
-                    matching_open = market_trades[market_trades["ID"] == open_id_ref]
-                    entry_price = float(matching_open["Strike"].values[0]) if not matching_open.empty and "Futures" in p_type else float(matching_open["Premium"].values[0]) if not matching_open.empty else prem
-                    mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
-                    if "Futures" in p_type:
-                        val = np.full_like(price_range, ((prem - entry_price) * mult_qty) - comm_val) if "Long" in p_type else np.full_like(price_range, ((entry_price - prem) * mult_qty) - comm_val)
-                    else:
-                        val = np.full_like(price_range, ((prem - entry_price) * mult_qty) - comm_val) if "Long" in p_type else np.full_like(price_range, ((entry_price - prem) * mult_qty) - comm_val)
-                day_val += val
-                
-        if has_t:
-            is_sel = (t_str == sim_date_str)
-            fig_daily_single.add_trace(go.Scatter(x=price_range, y=day_val, mode='lines', name=t_str, line=dict(color=colors[i % len(colors)], width=3 if is_sel else 1.5, dash='solid' if is_sel else 'dash')))
-
-    for i, t_str in enumerate(unique_dates):
-        if t_str > sim_date_str: continue
-        t_d = datetime.strptime(t_str, "%Y-%m-%d").date() if t_str else date.today()
-        cum_val = np.zeros_like(price_range)
-        cum_trades = market_trades[market_trades["TradeDate"].astype(str) <= t_str]
+        matching_closes = close_trades_sim[
+            (close_trades_sim["RefID"] == open_id) | 
+            ((close_trades_sim["RefID"] == 0) & 
+             (close_trades_sim["Series"] == open_row["Series"]) & 
+             (close_trades_sim["Type"] == p_type) & 
+             (('Futures' in p_type) | (close_trades_sim["Strike"] == stk)))
+        ]
         
-        if not cum_trades.empty:
-            for _, row in cum_trades.iterrows():
-                p_type, stk, prem, qty, status = row["Type"], float(row["Strike"]), float(row["Premium"]), int(row["Contracts"]), row["Status"]
-                comm_val = (float(row["Commission"]) * qty) if payoff_mode == "บาทรวม (THB)" else ((float(row["Commission"]) * qty) / contract_multiplier)
+        closed_qty = matching_closes["Contracts"].sum() if not matching_closes.empty else 0
+        rem_qty = max(0, open_qty - closed_qty)
+        
+        if rem_qty > 0:
+            mult_qty = (rem_qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else rem_qty)
+            comm_rem = (comm_unit_open * rem_qty) if payoff_mode == "บาทรวม (THB)" else ((comm_unit_open * rem_qty) / contract_multiplier)
+            
+            try:
+                T_today = max((datetime.strptime(str(open_row["ExpiryDate"]), "%Y-%m-%d").date() - today).days, 0) / 365.0
+            except:
+                T_today = 30 / 365.0
                 
-                try:
-                    T_sim = max((datetime.strptime(str(row["ExpiryDate"]), "%Y-%m-%d").date() - t_d).days, 0) / 365.0
-                except:
-                    T_sim = 30 / 365.0
-                    
-                if status == "Open":
-                    mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
-                    if p_type == "Long Futures": val = (price_range - stk) * mult_qty - comm_val
-                    elif p_type == "Short Futures": val = (stk - price_range) * mult_qty - comm_val
-                    elif "Call" in p_type:
-                        opt_v = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Call") for p in price_range])
-                        val = (opt_v - prem) * mult_qty - comm_val if "Long" in p_type else (prem - opt_v) * mult_qty - comm_val
-                    elif "Put" in p_type:
-                        opt_v = np.array([bs_option_price(p, stk, T_sim, risk_free_rate, volatility_input, "Put") for p in price_range])
-                        val = (opt_v - prem) * mult_qty - comm_val if "Long" in p_type else (prem - opt_v) * mult_qty - comm_val
-                    else:
-                        val = -comm_val
+            T_future = max(0.0, T_today - (days_pass_input / 365.0))
+            vol_adjusted = max(0.01, volatility_input + (vol_shift_input / 100.0))
+            
+            # คำนวณแต่ละตำแหน่งราคาใน Price Range
+            if "Futures" in p_type:
+                v_fut = (price_range - stk) * mult_qty - comm_rem if "Long" in p_type else (stk - price_range) * mult_qty - comm_rem
+                payoff_today += v_fut
+                payoff_greeks_time += v_fut
+                payoff_vol_shift += v_fut
+            else:
+                opt_kind = "Call" if "Call" in p_type else "Put"
+                
+                # 1. เส้นปัจจุบัน
+                p_tod = np.array([bs_option_price(p, stk, T_today, risk_free_rate, volatility_input, opt_kind) for p in price_range])
+                payoff_today += ((p_tod - prem) * mult_qty - comm_rem) if "Long" in p_type else ((prem - p_tod) * mult_qty - comm_rem)
+                
+                # 2. เส้นรวมค่ากรีก (Theta decay / เวลาผ่านไป)
+                p_grk = np.array([bs_option_price(p, stk, T_future, risk_free_rate, volatility_input, opt_kind) for p in price_range])
+                payoff_greeks_time += ((p_grk - prem) * mult_qty - comm_rem) if "Long" in p_type else ((prem - p_grk) * mult_qty - comm_rem)
+                
+                # 3. เส้นรวมค่า Volatility Change (%)
+                p_vol = np.array([bs_option_price(p, stk, T_future, risk_free_rate, vol_adjusted, opt_kind) for p in price_range])
+                payoff_vol_shift += ((p_vol - prem) * mult_qty - comm_rem) if "Long" in p_type else ((prem - p_vol) * mult_qty - comm_rem)
+
+        # บวกผลของรายการที่ปิดไปแล้วเข้ามาด้วย
+        if not matching_closes.empty:
+            for _, c_row in matching_closes.iterrows():
+                c_qty = int(c_row["Contracts"])
+                c_prem = float(c_row["Premium"])
+                c_strike_close = float(c_row["Strike"])
+                comm_unit_close = float(c_row["Commission"])
+                
+                c_comm = (comm_unit_open * c_qty) + (comm_unit_close * c_qty)
+                c_comm_scaled = c_comm if payoff_mode == "บาทรวม (THB)" else (c_comm / contract_multiplier)
+                mult_c = (c_qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else c_qty)
+                
+                if "Futures" in p_type:
+                    locked_val = ((c_strike_close - stk) * mult_c) - c_comm_scaled if "Long" in p_type else ((stk - c_strike_close) * mult_c) - c_comm_scaled
                 else:
-                    open_id_ref = int(row["RefID"])
-                    matching_open = market_trades[market_trades["ID"] == open_id_ref]
-                    entry_price = float(matching_open["Strike"].values[0]) if not matching_open.empty and "Futures" in p_type else float(matching_open["Premium"].values[0]) if not matching_open.empty else prem
-                    mult_qty = (qty * contract_multiplier if payoff_mode == "บาทรวม (THB)" else qty)
-                    if "Futures" in p_type:
-                        val = np.full_like(price_range, ((prem - entry_price) * mult_qty) - comm_val) if "Long" in p_type else np.full_like(price_range, ((entry_price - prem) * mult_qty) - comm_val)
-                    else:
-                        val = np.full_like(price_range, ((prem - entry_price) * mult_qty) - comm_val) if "Long" in p_type else np.full_like(price_range, ((entry_price - prem) * mult_qty) - comm_val)
-                cum_val += val
-                
-        is_sel = (t_str == sim_date_str)
-        fig_daily_cumulative.add_trace(go.Scatter(x=price_range, y=cum_val, mode='lines', name=t_str, line=dict(color=colors[i % len(colors)], width=3.5 if is_sel else 1.5, dash='solid' if is_sel else 'dash')))
+                    locked_val = ((c_prem - prem) * mult_c) - c_comm_scaled if "Long" in p_type else ((prem - c_prem) * mult_c) - c_comm_scaled
+                    
+                payoff_today += np.full_like(price_range, locked_val)
+                payoff_greeks_time += np.full_like(price_range, locked_val)
+                payoff_vol_shift += np.full_like(price_range, locked_val)
 
-fig_daily_single.add_hline(y=0, line_color="black", line_width=1)
-fig_daily_single.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
-fig_daily_single.update_layout(title="Payoff เฉพาะวันที่เทรด", template="plotly_white", height=380, margin=dict(t=40, b=30, l=30, r=30), legend=dict(orientation="h", y=1.1))
+fig_daily_sim = go.Figure()
 
-fig_daily_cumulative.add_hline(y=0, line_color="black", line_width=1)
-fig_daily_cumulative.add_vline(x=spot_price, line_dash="dot", line_color="red", line_width=2)
-fig_daily_cumulative.update_layout(title="Payoff สะสมถึงวันที่เลือก", template="plotly_white", height=380, margin=dict(t=40, b=30, l=30, r=30), legend=dict(orientation="h", y=1.1))
+# 1. เส้นปัจจุบัน T+0 (โทนสีน้ำเงินนุ่มนวล)
+fill_today = 'tozeroy' if show_fill_areas else None
+fig_daily_sim.add_trace(go.Scatter(
+    x=price_range, y=payoff_today,
+    mode='lines',
+    name='1. เส้นปัจจุบัน (T+0)',
+    line=dict(color='#4c6ef5', width=2.5),
+    fill=fill_today,
+    fillcolor='rgba(76, 110, 245, 0.08)'
+))
 
-st.plotly_chart(fig_daily_single, use_container_width=True)
-st.plotly_chart(fig_daily_cumulative, use_container_width=True)
+# 2. เส้นรวมค่ากรีก / เวลาผ่านไป (โทนสีส้มนุ่มนวล)
+fill_greeks = 'tozeroy' if show_fill_areas else None
+fig_daily_sim.add_trace(go.Scatter(
+    x=price_range, y=payoff_greeks_time,
+    mode='lines',
+    name=f'2. รวมค่ากรีก (+{days_pass_input} วัน)',
+    line=dict(color='#ff922b', width=2.5, dash='dash'),
+    fill=fill_greeks,
+    fillcolor='rgba(255, 146, 43, 0.08)'
+))
 
-st.markdown("<br>", unsafe_allow_html=True)
-st.markdown(f"### 📋 รายการเทรด (ณ วันที่ `{sim_date_str}`)")
-if not market_trades.empty:
-    filt_sim = market_trades[market_trades["TradeDate"].astype(str) <= sim_date_str]
-    if not filt_sim.empty:
-        st.dataframe(filt_sim[["ID", "Strategy", "Series", "Type", "Status", "Strike", "Premium", "Contracts", "Commission", "RefID", "TradeDate"]], use_container_width=True)
-    else:
-        st.info("ไม่มีรายการ")
+# 3. เส้นรวม Volatility (%) (โทนสีม่วงนุ่มนวล)
+fill_vol = 'tozeroy' if show_fill_areas else None
+fig_daily_sim.add_trace(go.Scatter(
+    x=price_range, y=payoff_vol_shift,
+    mode='lines',
+    name=f'3. รวม Volatility ({vol_shift_input:+.1f}%)',
+    line=dict(color='#20c997', width=2.5, dash='dot'),
+    fill=fill_vol,
+    fillcolor='rgba(32, 201, 151, 0.08)'
+))
+
+# เส้น Net Expiry เพื่อเปรียบเทียบ
+fig_daily_sim.add_trace(go.Scatter(
+    x=price_range, y=total_payoff,
+    mode='lines',
+    name='Net Expiry Payoff',
+    line=dict(color='#adb5bd', width=1.5, dash='longdash')
+))
+
+fig_daily_sim.add_hline(y=0, line_color="#495057", line_width=1)
+fig_daily_sim.add_vline(x=spot_price, line_dash="dot", line_color="#e53e3e", line_width=1.5)
+
+fig_daily_sim.update_layout(
+    title="เปรียบเทียบ Payoff ปัจจุบัน vs การสลายตัวของเวลา (Greeks) vs ความผันผวน (Volatility Shift)",
+    xaxis_title="Underlying Price",
+    yaxis_title=f"P&L ({payoff_mode})",
+    hovermode="x unified",
+    template="plotly_white",
+    height=480,
+    margin=dict(t=50, b=40, l=40, r=40),
+    legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="right", x=1)
+)
+
+st.plotly_chart(fig_daily_sim, use_container_width=True)
 
 st.markdown("<br><br>", unsafe_allow_html=True)
 

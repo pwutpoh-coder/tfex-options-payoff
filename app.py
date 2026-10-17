@@ -58,23 +58,23 @@ st.markdown("""
         font-weight: bold;
     }
 
-    /* CSS การ์ดไอคอนขนาดเล็กเรียงแนวนอนสำหรับผลสรุป Payoff */
+    /* CSS การ์ดไอคอนปรับเพิ่มขนาดตัวหนังสือให้ใหญ่ขึ้นตามคำขอ */
     .payoff-icon-card {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
         border-radius: 8px;
-        padding: 10px 14px;
+        padding: 12px 16px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.04);
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 14px;
         height: 100%;
     }
     .payoff-icon-box {
-        font-size: 22px;
+        font-size: 26px;
         background: #f1f3f5;
-        width: 40px;
-        height: 40px;
+        width: 46px;
+        height: 46px;
         border-radius: 50%;
         display: flex;
         align-items: center;
@@ -86,19 +86,21 @@ st.markdown("""
         flex-direction: column;
     }
     .payoff-card-title {
-        font-size: 12px;
-        color: #6c757d;
-        font-weight: 600;
+        font-size: 14px;
+        color: #495057;
+        font-weight: 700;
         margin-bottom: 2px;
     }
     .payoff-card-val {
-        font-size: 15px;
-        font-weight: 700;
+        font-size: 18px;
+        font-weight: 800;
         color: #212529;
+        line-height: 1.2;
     }
     .payoff-card-sub {
-        font-size: 11px;
-        color: #868e96;
+        font-size: 12px;
+        color: #6c757d;
+        margin-top: 2px;
     }
 
     @media (max-width: 768px) {
@@ -691,7 +693,7 @@ if not journal_df.empty:
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 1: Net Expiry Payoff (ปรับผลสรุปเป็นกลุ่มไอคอนเล็ก แนวนอน)
+# กราฟที่ 1: Net Expiry Payoff (ปรับผลสรุปเป็นกลุ่มไอคอนเล็ก ตัวหนังสือใหญ่ขึ้น เพิ่มระบุราคาขอบเขต)
 # ==========================================
 st.subheader(f"📈 1. Payoff วันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วย", ["บาทรวม (THB)", "จุด (Points)"])
@@ -783,7 +785,11 @@ min_pnl_val, price_at_min = total_payoff[np.argmin(total_payoff)], price_range[n
 unit_label = "บาท" if payoff_mode == "บาทรวม (THB)" else "จุด"
 be_str = ", ".join([f"{bp:,.2f}" for bp in be_points]) if be_points else "ไม่มี"
 
-# --- แก้ไขตามคำขอ: ผลสรุป Payoff แยกเป็นกลุ่มไอคอนเล็กๆ ในแถวแนวนอนเดียวกัน ---
+# กำหนดราคาซ้ายสุดและขวาสุด
+left_price_val = price_range[0]
+right_price_val = price_range[-1]
+
+# --- แก้ไขตามคำขอ: ปรับขนาดตัวหนังสือให้ใหญ่ขึ้น + เพิ่มราคาที่ขอบเขตซ้าย/ขวา ---
 st.markdown("#### 🎯 ผลสรุป Payoff")
 col_card1, col_card2, col_card3, col_card4 = st.columns(4)
 
@@ -793,7 +799,7 @@ with col_card1:
         <div class="payoff-icon-box" style="background:#e6fcf5; color:#0ca678;">🟢</div>
         <div class="payoff-card-content">
             <span class="payoff-card-title">กำไรสูงสุด</span>
-            <span class="payoff-card-val" style="color:#2b8a3e;">{max_pnl_val:,.2f} <span style="font-size:12px; font-weight:normal;">{unit_label}</span></span>
+            <span class="payoff-card-val" style="color:#2b8a3e;">{max_pnl_val:,.2f} <span style="font-size:13px; font-weight:normal;">{unit_label}</span></span>
             <span class="payoff-card-sub">ที่ราคา {price_at_max:,.2f}</span>
         </div>
     </div>
@@ -805,7 +811,7 @@ with col_card2:
         <div class="payoff-icon-box" style="background:#fff5f5; color:#f03e3e;">🔴</div>
         <div class="payoff-card-content">
             <span class="payoff-card-title">ขาดทุนสูงสุด</span>
-            <span class="payoff-card-val" style="color:#c92a2a;">{min_pnl_val:,.2f} <span style="font-size:12px; font-weight:normal;">{unit_label}</span></span>
+            <span class="payoff-card-val" style="color:#c92a2a;">{min_pnl_val:,.2f} <span style="font-size:13px; font-weight:normal;">{unit_label}</span></span>
             <span class="payoff-card-sub">ที่ราคา {price_at_min:,.2f}</span>
         </div>
     </div>
@@ -817,8 +823,8 @@ with col_card3:
         <div class="payoff-icon-box" style="background:#e7f5ff; color:#1c7ed6;">📊</div>
         <div class="payoff-card-content">
             <span class="payoff-card-title">ขอบเขต ซ้าย / ขวา</span>
-            <span class="payoff-card-val">{total_payoff[0]:,.0f} / {total_payoff[-1]:,.0f}</span>
-            <span class="payoff-card-sub">หน่วย {unit_label}</span>
+            <span class="payoff-card-val" style="font-size:16px;">{total_payoff[0]:,.0f} / {total_payoff[-1]:,.0f} <span style="font-size:12px; font-weight:normal;">{unit_label}</span></span>
+            <span class="payoff-card-sub">ราคา {left_price_val:,.2f} / {right_price_val:,.2f}</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -829,7 +835,7 @@ with col_card4:
         <div class="payoff-icon-box" style="background:#fff9db; color:#f59f00;">💡</div>
         <div class="payoff-card-content">
             <span class="payoff-card-title">จุดคุ้มทุน (BE)</span>
-            <span class="payoff-card-val" style="font-size:13px;">{be_str}</span>
+            <span class="payoff-card-val" style="font-size:15px;">{be_str}</span>
             <span class="payoff-card-sub">Break-Even Point</span>
         </div>
     </div>
@@ -880,13 +886,13 @@ fig.update_layout(
     title=dict(text=f"Net Expiry Payoff ({payoff_mode})", y=0.98, x=0.0, xanchor='left', yanchor='top'),
     xaxis_title="Underlying Price", yaxis_title=f"P&L ({payoff_mode})",
     hovermode="x unified", template="plotly_white", height=450, margin=dict(t=50, b=40, l=40, r=40),
-    legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
 )
 st.plotly_chart(fig, use_container_width=True)
 st.markdown("<br><br>", unsafe_allow_html=True)
 
 # ==========================================
-# กราฟที่ 2: จำลอง Payoff รายวัน (เพิ่มเส้นปัจจุบัน, รวมกรีก Theta decay, รวม Volatility %)
+# กราฟที่ 2: จำลอง Payoff รายวัน และปัจจัยความเสี่ยง
 # ==========================================
 st.subheader("⏱ 2. จำลอง Payoff รายวัน และปัจจัยความเสี่ยง")
 
@@ -1002,7 +1008,7 @@ fig_daily_sim.add_trace(go.Scatter(
     fillcolor='rgba(255, 146, 43, 0.08)'
 ))
 
-# 3. เส้นรวม Volatility (%) (โทนสีม่วงนุ่มนวล)
+# 3. เส้นรวม Volatility (%) (โทนสีม่วง/เขียวนุ่มนวล)
 fill_vol = 'tozeroy' if show_fill_areas else None
 fig_daily_sim.add_trace(go.Scatter(
     x=price_range, y=payoff_vol_shift,
@@ -1024,15 +1030,28 @@ fig_daily_sim.add_trace(go.Scatter(
 fig_daily_sim.add_hline(y=0, line_color="#495057", line_width=1)
 fig_daily_sim.add_vline(x=spot_price, line_dash="dot", line_color="#e53e3e", line_width=1.5)
 
+# --- แก้ไขตามคำขอ: ย้าย Legend ลงมาด้านล่างและจัดระยะเว้นขอบบน (Margin Top) ไม่ให้ทับกับ Title ---
 fig_daily_sim.update_layout(
-    title="เปรียบเทียบ Payoff ปัจจุบัน vs การสลายตัวของเวลา (Greeks) vs ความผันผวน (Volatility Shift)",
+    title=dict(
+        text="เปรียบเทียบ Payoff ปัจจุบัน vs การสลายตัวของเวลา (Greeks) vs ความผันผวน (Volatility Shift)",
+        y=0.96,
+        x=0.0,
+        xanchor='left',
+        yanchor='top'
+    ),
     xaxis_title="Underlying Price",
     yaxis_title=f"P&L ({payoff_mode})",
     hovermode="x unified",
     template="plotly_white",
-    height=480,
-    margin=dict(t=50, b=40, l=40, r=40),
-    legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="right", x=1)
+    height=520,
+    margin=dict(t=70, b=80, l=40, r=40),
+    legend=dict(
+        orientation="h",
+        yanchor="top",
+        y=-0.22,
+        xanchor="center",
+        x=0.5
+    )
 )
 
 st.plotly_chart(fig_daily_sim, use_container_width=True)

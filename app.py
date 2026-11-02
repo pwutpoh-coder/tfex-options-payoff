@@ -698,7 +698,13 @@ st.markdown("<br><br>", unsafe_allow_html=True)
 st.subheader(f"📈 1. Payoff วันหมดอายุ ({selected_market})")
 payoff_mode = st.selectbox("หน่วย", ["บาทรวม (THB)", "จุด (Points)"])
 
-price_range = np.linspace(spot_price * 0.85, spot_price * 1.15, 300)
+# สร้างช่วงราคาครอบคลุม พร้อมรวมราคา Spot ปัจจุบันและ Strike ทุกอันเข้าไป เพื่อป้องกัน Linear Interpolation Error ณ จุดหักมุม
+base_prices = np.linspace(spot_price * 0.85, spot_price * 1.15, 300)
+extra_prices = [spot_price]
+if not market_trades.empty and "Strike" in market_trades.columns:
+    extra_prices.extend(market_trades["Strike"].dropna().unique().tolist())
+
+price_range = np.unique(np.sort(np.append(base_prices, extra_prices)))
 total_payoff = np.zeros_like(price_range)
 total_greeks = {"Delta": 0.0, "Gamma": 0.0, "Theta": 0.0, "Vega": 0.0}
 

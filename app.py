@@ -6,6 +6,7 @@ import yfinance as yf
 import os
 from datetime import datetime, date, timezone, timedelta
 from scipy.stats import norm
+import streamlit.components.v1 as components
 
 # ตั้งค่าหน้าเว็บ: ใช้ชื่อ Futures & Options Payoff และไอคอน 📈
 st.set_page_config(
@@ -361,9 +362,33 @@ selected_market = st.sidebar.selectbox("ตลาด", ["TFEX USD/THB", "TFEX SE
 
 current_spot, auto_volatility, last_update_time = get_market_data(selected_market)
 
+# --- ส่วนจัดการการรีเฟรชราคาอ้างอิง ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔄 ระบบรีเฟรชราคาอ้างอิง")
+refresh_mode = st.sidebar.radio(
+    "โหมดการรีเฟรชราคา",
+    ["อัตโนมัติ (ทุก 5 นาที)", "ไม่อัตโนมัติ (กดเอง)"],
+    index=0
+)
+
+# ถ้าเลือกโหมดอัตโนมัติ ให้ทำการแทรก Script เพื่อสั่งรีเฟรชหน้า Streamlit ทุกๆ 300 วินาที (5 นาที)
+if refresh_mode == "อัตโนมัติ (ทุก 5 นาที)":
+    st.sidebar.caption("⏱️ กำลังทำงาน: รีเฟรชอัตโนมัติทุกๆ 5 นาที")
+    components.html(
+        """
+        <script>
+            setTimeout(function(){
+                window.parent.location.reload();
+            }, 300000);
+        </script>
+        """,
+        height=0,
+        width=0
+    )
+
 col_head1, col_head2 = st.columns([1, 2])
 with col_head1:
-    if st.button("🔄 รีเฟรช"):
+    if st.button("🔄 รีเฟรชราคา"):
         st.cache_data.clear()
         st.rerun()
 with col_head2:
@@ -795,7 +820,7 @@ be_str = ", ".join([f"{bp:,.2f}" for bp in be_points]) if be_points else "ไม
 left_price_val = price_range[0]
 right_price_val = price_range[-1]
 
-# --- แก้ไขตามคำขอ: ปรับขนาดตัวหนังสือให้ใหญ่ขึ้น + เพิ่มราคาที่ขอบเขตซ้าย/ขวา ---
+# --- ผลสรุป Payoff ---
 st.markdown("#### 🎯 ผลสรุป Payoff")
 col_card1, col_card2, col_card3, col_card4 = st.columns(4)
 
@@ -1036,7 +1061,6 @@ fig_daily_sim.add_trace(go.Scatter(
 fig_daily_sim.add_hline(y=0, line_color="#495057", line_width=1)
 fig_daily_sim.add_vline(x=spot_price, line_dash="dot", line_color="#e53e3e", line_width=1.5)
 
-# --- แก้ไขตามคำขอ: ย้าย Legend ลงมาด้านล่างและจัดระยะเว้นขอบบน (Margin Top) ไม่ให้ทับกับ Title ---
 fig_daily_sim.update_layout(
     title=dict(
         text="เปรียบเทียบ Payoff ปัจจุบัน vs การสลายตัวของเวลา (Greeks) vs ความผันผวน (Volatility Shift)",
